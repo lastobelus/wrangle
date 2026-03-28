@@ -9,8 +9,7 @@ pub use agent_config::{
 };
 pub use config::{
     ParallelConfig, ParallelTaskSpec, RuntimeConfig, RuntimeMode, ensure_parallel_tasks,
-    get_default_max_parallel_workers, is_valid_session_id, parse_parallel_config,
-    read_stdin_task,
+    get_default_max_parallel_workers, is_valid_session_id, parse_parallel_config, read_stdin_task,
 };
 pub use errors::{BackendError, ConfigError, ExecutionError, ParseError};
 pub use protocol::{

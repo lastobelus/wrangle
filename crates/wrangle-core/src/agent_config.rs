@@ -166,4 +166,3 @@ pub async fn resolve_agent_for_runtime_config(config: &mut RuntimeConfig) -> Res
     apply_agent_to_runtime_config(config, &agent);
     Ok(())
 }
-

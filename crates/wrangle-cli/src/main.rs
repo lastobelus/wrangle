@@ -72,10 +72,20 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     prompt_file: Option<String>,
 
-    #[arg(long, value_enum, default_value = "default", env = "WRANGLE_PERMISSION_POLICY")]
+    #[arg(
+        long,
+        value_enum,
+        default_value = "default",
+        env = "WRANGLE_PERMISSION_POLICY"
+    )]
     permission_policy: PermissionArg,
 
-    #[arg(long, value_enum, default_value = "one-shot-process", env = "WRANGLE_TRANSPORT")]
+    #[arg(
+        long,
+        value_enum,
+        default_value = "one-shot-process",
+        env = "WRANGLE_TRANSPORT"
+    )]
     transport: TransportArg,
 
     #[arg(long, default_value = "7200", env = "WRANGLE_TIMEOUT_SECS")]
@@ -146,7 +156,12 @@ fn setup_logging(cli: &Cli) -> Result<Option<WorkerGuard>> {
         subscriber.init();
     } else {
         subscriber
-            .with(fmt::layer().with_writer(std::io::stderr).with_target(false).compact())
+            .with(
+                fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_target(false)
+                    .compact(),
+            )
             .init();
     }
 
@@ -243,7 +258,9 @@ async fn run_parallel(mut config: RuntimeConfig) -> Result<()> {
     while !pending.is_empty() || !tasks.is_empty() {
         while tasks.len() < max_workers {
             let Some(index) = pending.iter().position(|task| {
-                task.dependencies.iter().all(|dep| results.contains_key(dep))
+                task.dependencies
+                    .iter()
+                    .all(|dep| results.contains_key(dep))
             }) else {
                 break;
             };

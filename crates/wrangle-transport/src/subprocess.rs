@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{info, warn};
 use wrangle_core::{
-    AgentBackend, BackendKind, BackendTransport, ExecutionEvent, ExecutionRequest, ExecutionResult,
+    AgentBackend, BackendTransport, ExecutionEvent, ExecutionRequest, ExecutionResult,
     RuntimeConfig, SessionHandle, SessionState, TransportMode,
 };
 
@@ -41,7 +41,10 @@ const REDUCED_ENV_VARS: &[&str] = &[
 #[derive(Debug, Default)]
 pub struct SubprocessTransport;
 
-fn build_process_env(config: &RuntimeConfig, extra: &HashMap<String, String>) -> HashMap<String, String> {
+fn build_process_env(
+    config: &RuntimeConfig,
+    extra: &HashMap<String, String>,
+) -> HashMap<String, String> {
     let mut env = if config.inherit_env {
         std::env::vars().collect::<HashMap<_, _>>()
     } else {
@@ -62,9 +65,12 @@ fn build_process_env(config: &RuntimeConfig, extra: &HashMap<String, String>) ->
 
 fn should_use_stdin(task: &str) -> bool {
     task.len() > 800
-        || task
-            .chars()
-            .any(|c| ['\'', '"', '`', '$', '\\', '\n', '\r', '|', '&', ';', '<', '>'].contains(&c))
+        || task.chars().any(|c| {
+            [
+                '\'', '"', '`', '$', '\\', '\n', '\r', '|', '&', ';', '<', '>',
+            ]
+            .contains(&c)
+        })
 }
 
 fn extract_session_id(value: &serde_json::Value) -> Option<String> {
@@ -203,7 +209,10 @@ impl BackendTransport for SubprocessTransport {
         .await;
 
         if parse.is_err() {
-            warn!(backend = backend.descriptor().name, timeout_secs, "Task timed out");
+            warn!(
+                backend = backend.descriptor().name,
+                timeout_secs, "Task timed out"
+            );
             let _ = child.kill().await;
         }
 

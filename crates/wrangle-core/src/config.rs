@@ -183,4 +183,3 @@ pub fn get_default_max_parallel_workers() -> usize {
         .unwrap_or(1);
     (cpu_count * 4).clamp(1, 100)
 }
-

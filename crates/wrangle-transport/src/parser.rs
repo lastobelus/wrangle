@@ -68,4 +68,3 @@ mod tests {
         assert!(parser.next_event().await.is_none());
     }
 }
-

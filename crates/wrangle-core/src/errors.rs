@@ -33,4 +33,3 @@ pub enum ExecutionError {
     #[error("backend exited without a status code")]
     MissingExitCode,
 }
-

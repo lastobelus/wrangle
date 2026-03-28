@@ -26,4 +26,3 @@ pub fn setup_signal_handler(child_pid: u32) -> SignalGuard {
     }
     SignalGuard { child_pid }
 }
-

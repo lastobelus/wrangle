@@ -1,5 +1,4 @@
 use anyhow::{Result, bail};
-use std::collections::HashMap;
 use which::which;
 use wrangle_core::{
     AgentBackend, BackendDescriptor, BackendKind, ExecutionRequest, PermissionPolicy,
@@ -12,8 +11,10 @@ pub struct CliBackend {
 }
 
 const ONE_SHOT_ONLY: &[TransportMode] = &[TransportMode::OneShotProcess];
-const ONE_SHOT_AND_PERSISTENT: &[TransportMode] =
-    &[TransportMode::OneShotProcess, TransportMode::PersistentBackend];
+const ONE_SHOT_AND_PERSISTENT: &[TransportMode] = &[
+    TransportMode::OneShotProcess,
+    TransportMode::PersistentBackend,
+];
 
 impl CliBackend {
     fn new(kind: BackendKind, supports_persistent_backend: bool) -> Self {
@@ -80,7 +81,10 @@ fn build_args(
                 args.push("--model".to_string());
                 args.push(model.clone());
             }
-            BackendKind::Codex | BackendKind::Gemini | BackendKind::Qwen | BackendKind::Opencode => {
+            BackendKind::Codex
+            | BackendKind::Gemini
+            | BackendKind::Qwen
+            | BackendKind::Opencode => {
                 args.push("-m".to_string());
                 args.push(model.clone());
             }
@@ -168,7 +172,10 @@ pub fn select_cli_backend(name: Option<&str>) -> Result<CliBackend> {
     all_cli_backends()
         .into_iter()
         .find(|backend| backend.is_available())
-        .ok_or_else(|| wrangle_core::BackendError::NotAvailable("no supported CLI backends found".to_string()).into())
+        .ok_or_else(|| {
+            wrangle_core::BackendError::NotAvailable("no supported CLI backends found".to_string())
+                .into()
+        })
 }
 
 pub fn ensure_transport_supported(backend: &CliBackend, mode: TransportMode) -> Result<()> {
@@ -189,6 +196,7 @@ pub fn ensure_transport_supported(backend: &CliBackend, mode: TransportMode) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use wrangle_core::{ExecutionRequest, SessionHandle, SessionState};
 
     fn sample_request() -> ExecutionRequest {
