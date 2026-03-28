@@ -44,6 +44,15 @@ pub enum PermissionPolicy {
     Bypass,
 }
 
+impl PermissionPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Bypass => "bypass",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionState {
@@ -101,6 +110,33 @@ pub struct BackendDescriptor {
     pub transport_modes: &'static [TransportMode],
     pub supports_resume: bool,
     pub supports_persistent_backend: bool,
+    pub permission_policies: &'static [PermissionPolicy],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendCapabilities {
+    pub kind: BackendKind,
+    pub name: String,
+    pub transport_modes: Vec<TransportMode>,
+    pub supports_resume: bool,
+    pub supports_persistent_backend: bool,
+    pub supported_permission_policies: Vec<PermissionPolicy>,
+    pub available: bool,
+}
+
+impl BackendCapabilities {
+    pub fn from_descriptor(descriptor: &BackendDescriptor, available: bool) -> Self {
+        Self {
+            kind: descriptor.kind,
+            name: descriptor.name.to_string(),
+            transport_modes: descriptor.transport_modes.to_vec(),
+            supports_resume: descriptor.supports_resume,
+            supports_persistent_backend: descriptor.supports_persistent_backend,
+            supported_permission_policies: descriptor.permission_policies.to_vec(),
+            available,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

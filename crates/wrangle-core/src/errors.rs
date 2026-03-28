@@ -8,6 +8,12 @@ pub enum ConfigError {
     TaskPromptFilesDisabled,
     #[error("no task provided via stdin")]
     EmptyTaskFromStdin,
+    #[error("duplicate parallel task id: {0}")]
+    DuplicateTaskId(String),
+    #[error("parallel task depends on an unknown task id: {0}")]
+    UnknownDependency(String),
+    #[error("parallel task cannot depend on itself: {0}")]
+    SelfDependency(String),
 }
 
 #[derive(Debug, Error)]
@@ -32,4 +38,10 @@ pub enum ExecutionError {
     TimedOut(u64),
     #[error("backend exited without a status code")]
     MissingExitCode,
+    #[error("circular dependency detected in parallel tasks: {0}")]
+    CircularDependency(String),
+    #[error("backend '{backend}' does not support transport mode '{transport}'")]
+    UnsupportedTransport { backend: String, transport: String },
+    #[error("transport mode '{0}' is not implemented yet")]
+    UnimplementedTransport(String),
 }

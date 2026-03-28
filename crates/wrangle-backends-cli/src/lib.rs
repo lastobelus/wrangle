@@ -1,8 +1,8 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use which::which;
 use wrangle_core::{
-    AgentBackend, BackendDescriptor, BackendKind, ExecutionRequest, PermissionPolicy,
-    RuntimeConfig, TransportMode,
+    AgentBackend, BackendCapabilities, BackendDescriptor, BackendKind, ExecutionError,
+    ExecutionRequest, PermissionPolicy, RuntimeConfig, TransportMode,
 };
 use wrangle_transport::request_to_target;
 
@@ -15,6 +15,9 @@ const ONE_SHOT_AND_PERSISTENT: &[TransportMode] = &[
     TransportMode::OneShotProcess,
     TransportMode::PersistentBackend,
 ];
+const DEFAULT_AND_BYPASS: &[PermissionPolicy] =
+    &[PermissionPolicy::Default, PermissionPolicy::Bypass];
+const DEFAULT_ONLY: &[PermissionPolicy] = &[PermissionPolicy::Default];
 
 impl CliBackend {
     fn new(kind: BackendKind, supports_persistent_backend: bool) -> Self {
@@ -29,6 +32,11 @@ impl CliBackend {
                 },
                 supports_resume: true,
                 supports_persistent_backend,
+                permission_policies: if kind == BackendKind::Opencode {
+                    DEFAULT_ONLY
+                } else {
+                    DEFAULT_AND_BYPASS
+                },
             },
         }
     }
@@ -161,6 +169,16 @@ pub fn all_cli_backends() -> Vec<CliBackend> {
     ]
 }
 
+pub fn backend_capabilities() -> Vec<BackendCapabilities> {
+    all_cli_backends()
+        .into_iter()
+        .map(|backend| {
+            let descriptor = backend.descriptor();
+            BackendCapabilities::from_descriptor(&descriptor, backend.is_available())
+        })
+        .collect()
+}
+
 pub fn select_cli_backend(name: Option<&str>) -> Result<CliBackend> {
     if let Some(name) = name {
         return all_cli_backends()
@@ -182,15 +200,16 @@ pub fn ensure_transport_supported(backend: &CliBackend, mode: TransportMode) -> 
     if backend.descriptor.transport_modes.contains(&mode) {
         return Ok(());
     }
-    bail!(
-        "backend '{}' does not support transport mode '{}'",
-        backend.descriptor.name,
-        match mode {
+    Err(ExecutionError::UnsupportedTransport {
+        backend: backend.descriptor.name.to_string(),
+        transport: match mode {
             TransportMode::OneShotProcess => "one-shot-process",
             TransportMode::PersistentBackend => "persistent-backend",
             TransportMode::WrangleServer => "wrangle-server",
         }
-    )
+        .to_string(),
+    }
+    .into())
 }
 
 #[cfg(test)]

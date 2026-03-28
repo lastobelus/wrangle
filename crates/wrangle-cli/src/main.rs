@@ -2,18 +2,17 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::task::JoinSet;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-use wrangle_backends_cli::{ensure_transport_supported, select_cli_backend};
 use wrangle_core::{
-    BackendTransport, ExecutionRequest, ParallelTaskSpec, PermissionPolicy, RuntimeConfig,
-    RuntimeMode, SessionHandle, SessionState, TransportMode, ensure_parallel_tasks,
-    get_default_max_parallel_workers, parse_parallel_config, read_stdin_task,
-    resolve_agent_for_runtime_config,
+    ExecutionRequest, PermissionPolicy, RuntimeConfig, RuntimeMode, SessionHandle, SessionState,
+    TransportMode, parse_parallel_config, read_stdin_task,
 };
-use wrangle_transport::SubprocessTransport;
+use wrangle_runner::{
+    PlaybookInvocation, PlaybookName, available_backends, build_playbook_plan, execute_parallel,
+    execute_request, preview_request,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -45,6 +44,19 @@ impl From<PermissionArg> for PermissionPolicy {
         match value {
             PermissionArg::Default => PermissionPolicy::Default,
             PermissionArg::Bypass => PermissionPolicy::Bypass,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PlaybookArg {
+    LandWork,
+}
+
+impl From<PlaybookArg> for PlaybookName {
+    fn from(value: PlaybookArg) -> Self {
+        match value {
+            PlaybookArg::LandWork => PlaybookName::LandWork,
         }
     }
 }
@@ -109,6 +121,9 @@ struct Cli {
     #[arg(long)]
     parallel: bool,
 
+    #[arg(long)]
+    dry_run: bool,
+
     #[arg(long, short = 'q', env = "WRANGLE_QUIET")]
     quiet: bool,
 
@@ -123,6 +138,16 @@ struct Cli {
 enum Command {
     Resume {
         session_id: String,
+        task: String,
+        workdir: Option<String>,
+    },
+    Backends {
+        #[arg(long)]
+        json: bool,
+    },
+    Playbook {
+        #[arg(value_enum)]
+        name: PlaybookArg,
         task: String,
         workdir: Option<String>,
     },
@@ -208,106 +233,20 @@ fn request_from_task(
     }
 }
 
-async fn execute_request(
-    backend: &wrangle_backends_cli::CliBackend,
-    config: &RuntimeConfig,
-    request: ExecutionRequest,
-) -> Result<wrangle_core::ExecutionResult> {
-    match config.transport_mode {
-        TransportMode::OneShotProcess => {
-            let transport = SubprocessTransport;
-            transport.execute(backend, config, request).await
-        }
-        TransportMode::PersistentBackend => {
-            bail!(
-                "persistent backend transport is designed into wrangle, but not implemented yet in v1"
-            );
-        }
-        TransportMode::WrangleServer => {
-            bail!("wrangle server transport is reserved for a future release");
-        }
+async fn print_or_run(cli: &Cli, config: RuntimeConfig, request: ExecutionRequest) -> Result<()> {
+    if cli.dry_run {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&preview_request(config, request).await?)?
+        );
+        return Ok(());
     }
-}
 
-async fn run_single(mut config: RuntimeConfig, request: ExecutionRequest) -> Result<()> {
-    resolve_agent_for_runtime_config(&mut config).await?;
-    let backend = select_cli_backend(config.backend.as_deref())?;
-    ensure_transport_supported(&backend, config.transport_mode)?;
-    let result = execute_request(&backend, &config, request).await?;
-
+    let result = execute_request(config, request).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     if !result.success {
         std::process::exit(1);
     }
-    Ok(())
-}
-
-async fn run_parallel(mut config: RuntimeConfig) -> Result<()> {
-    resolve_agent_for_runtime_config(&mut config).await?;
-    let parsed = parse_parallel_config().await?;
-    ensure_parallel_tasks(&parsed)?;
-
-    let max_workers = config
-        .max_parallel_workers
-        .unwrap_or_else(get_default_max_parallel_workers);
-
-    let mut pending: Vec<ParallelTaskSpec> = parsed.tasks.clone();
-    let mut results = HashMap::<String, serde_json::Value>::new();
-    let mut tasks = JoinSet::new();
-
-    while !pending.is_empty() || !tasks.is_empty() {
-        while tasks.len() < max_workers {
-            let Some(index) = pending.iter().position(|task| {
-                task.dependencies
-                    .iter()
-                    .all(|dep| results.contains_key(dep))
-            }) else {
-                break;
-            };
-
-            let spec = pending.remove(index);
-            let mut task_config = config.clone();
-            task_config.backend = spec.backend.clone().or_else(|| config.backend.clone());
-            task_config.agent = spec.agent.clone().or_else(|| config.agent.clone());
-            task_config.model = spec.model.clone().or_else(|| config.model.clone());
-            task_config.transport_mode = spec.transport_mode.unwrap_or(config.transport_mode);
-            task_config.permission_policy =
-                spec.permission_policy.unwrap_or(config.permission_policy);
-
-            let request = spec.to_request(&task_config)?;
-            let task_id = spec.id.clone();
-
-            tasks.spawn(async move {
-                let mut resolved = task_config;
-                resolve_agent_for_runtime_config(&mut resolved).await?;
-                let backend = select_cli_backend(resolved.backend.as_deref())?;
-                ensure_transport_supported(&backend, resolved.transport_mode)?;
-                let result = execute_request(&backend, &resolved, request).await?;
-                Ok::<(String, serde_json::Value), anyhow::Error>((
-                    task_id,
-                    serde_json::to_value(result)?,
-                ))
-            });
-        }
-
-        let Some(outcome) = tasks.join_next().await else {
-            if !pending.is_empty() {
-                bail!("circular dependency detected in parallel tasks");
-            }
-            break;
-        };
-
-        let (task_id, result) = outcome??;
-        results.insert(task_id, result);
-    }
-
-    let ordered: Vec<serde_json::Value> = parsed
-        .tasks
-        .iter()
-        .filter_map(|task| results.remove(&task.id))
-        .collect();
-
-    println!("{}", serde_json::to_string_pretty(&ordered)?);
     Ok(())
 }
 
@@ -317,6 +256,39 @@ async fn main() -> Result<()> {
     let _guard = setup_logging(&cli)?;
 
     match &cli.command {
+        Some(Command::Backends { json: _ }) => {
+            println!("{}", serde_json::to_string_pretty(&available_backends())?);
+            return Ok(());
+        }
+        Some(Command::Playbook {
+            name,
+            task,
+            workdir,
+        }) => {
+            let config = runtime_config_from_cli(&cli, workdir.as_deref(), RuntimeMode::New);
+            let invocation = PlaybookInvocation {
+                name: (*name).into(),
+                task: task.clone(),
+                work_dir: config.work_dir.clone(),
+                backend: cli.backend.clone(),
+                model: cli.model.clone(),
+                agent: cli.agent.clone(),
+                permission_policy: cli.permission_policy.into(),
+                transport_mode: cli.transport.into(),
+            };
+
+            if cli.dry_run {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&build_playbook_plan(&config, invocation))?
+                );
+                return Ok(());
+            }
+
+            let (config, request) = wrangle_runner::build_playbook(&config, invocation);
+            print_or_run(&cli, config, request).await?;
+            return Ok(());
+        }
         Some(Command::Resume {
             session_id,
             task,
@@ -334,11 +306,18 @@ async fn main() -> Result<()> {
                 transport: config.transport_mode,
             });
             let request = request_from_task(&config, task, cli.prompt_file.clone(), session);
-            run_single(config, request).await?;
+            print_or_run(&cli, config, request).await?;
+            return Ok(());
         }
         None if cli.parallel => {
+            if cli.dry_run {
+                bail!("--dry-run is not supported with --parallel");
+            }
             let config = runtime_config_from_cli(&cli, None, RuntimeMode::New);
-            run_parallel(config).await?;
+            let parsed = parse_parallel_config().await?;
+            let results = execute_parallel(config, parsed.tasks).await?;
+            println!("{}", serde_json::to_string_pretty(&results)?);
+            return Ok(());
         }
         None => {
             let task = match &cli.task {
@@ -348,7 +327,7 @@ async fn main() -> Result<()> {
             };
             let config = runtime_config_from_cli(&cli, None, RuntimeMode::New);
             let request = request_from_task(&config, task, cli.prompt_file.clone(), None);
-            run_single(config, request).await?;
+            print_or_run(&cli, config, request).await?;
         }
     }
 

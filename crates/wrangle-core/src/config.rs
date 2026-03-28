@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -173,6 +174,33 @@ pub async fn read_stdin_task() -> Result<String> {
 pub fn ensure_parallel_tasks(config: &ParallelConfig) -> Result<()> {
     if config.tasks.is_empty() {
         bail!("no tasks provided for parallel execution");
+    }
+
+    let task_ids: HashSet<&str> = config.tasks.iter().map(|task| task.id.as_str()).collect();
+    if task_ids.len() != config.tasks.len() {
+        let mut seen = HashSet::new();
+        for task in &config.tasks {
+            if !seen.insert(task.id.clone()) {
+                return Err(ConfigError::DuplicateTaskId(task.id.clone()).into());
+            }
+        }
+    }
+
+    for task in &config.tasks {
+        if let Some(session_id) = &task.session_id
+            && !is_valid_session_id(session_id)
+        {
+            return Err(ConfigError::InvalidSessionId(session_id.clone()).into());
+        }
+
+        for dependency in &task.dependencies {
+            if dependency == &task.id {
+                return Err(ConfigError::SelfDependency(task.id.clone()).into());
+            }
+            if !task_ids.contains(dependency.as_str()) {
+                return Err(ConfigError::UnknownDependency(dependency.clone()).into());
+            }
+        }
     }
     Ok(())
 }

@@ -13,7 +13,7 @@ pub use config::{
 };
 pub use errors::{BackendError, ConfigError, ExecutionError, ParseError};
 pub use protocol::{
-    AgentBackend, BackendDescriptor, BackendKind, BackendTransport, CommandSpec, ExecutionEvent,
-    ExecutionRequest, ExecutionResult, PermissionPolicy, SessionHandle, SessionState,
-    TransportMode,
+    AgentBackend, BackendCapabilities, BackendDescriptor, BackendKind, BackendTransport,
+    CommandSpec, ExecutionEvent, ExecutionRequest, ExecutionResult, PermissionPolicy,
+    SessionHandle, SessionState, TransportMode,
 };
