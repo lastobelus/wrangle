@@ -1,0 +1,15 @@
+[package]
+name = "wrangle-backends-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+which.workspace = true
+wrangle-core = { path = "../wrangle-core" }
+wrangle-transport = { path = "../wrangle-transport" }
+

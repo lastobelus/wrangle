@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "crates/wrangle-core",
+    "crates/wrangle-transport",
+    "crates/wrangle-backends-cli",
+    "crates/wrangle-cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/lastobelus/wrangle"
+authors = ["lastobelus and contributors"]
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env", "string"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+which = "7"
+ctrlc = "3"
