@@ -2,13 +2,15 @@
 
 `wrangle` is a generalized agent execution and orchestration layer for local AI agent CLIs, with a transport model that is ready for persistent backends and a future `wrangle` server.
 
-This repository began with an import of MIT-licensed code from [`localSummer/codeagent-wrapper-node`](https://github.com/localSummer/codeagent-wrapper-node), specifically the `codeagent-wrapper-rs` implementation. The imported code provided the starting point for the CLI wrapper runtime; `wrangle` now reshapes that code into a new public project with different interfaces, security defaults, and long-term architecture. See [docs/provenance.md](/Users/lasto/projects/wrangler/docs/provenance.md) for the full attribution trail.
+This repository began with an import of MIT-licensed code from [`localSummer/codeagent-wrapper-node`](https://github.com/localSummer/codeagent-wrapper-node), specifically the `codeagent-wrapper-rs` implementation. The imported code provided the starting point for the CLI wrapper runtime; `wrangle` now reshapes that code into a new public project with different interfaces, security defaults, and long-term architecture. See [docs/provenance.md](docs/provenance.md) for the full attribution trail.
+
+For the product-level direction and issue framing, see [docs/roadmap.md](docs/roadmap.md).
 
 ## What v1 is for
 
 - CLI-first execution of agent backends
 - Normalized request, event, and result types
-- A thin library API for programmatic callers such as tinbox/playbooks
+- A thin library API for programmatic callers such as orchestration systems and playbook runners
 - Explicit permission-policy abstraction
 - Transport separation from backend behavior
 - Future-proofing for Opencode persistent transport and a `wrangle`-native server
@@ -39,14 +41,14 @@ V1 implements `OneShotProcess` and keeps the interface stable for later persiste
 
 ## Security posture
 
-`wrangle` is not a sandbox. It delegates execution trust to the selected backend executable and is careful about prompt logging, output buffering, and file-input gating. Read [SECURITY.md](/Users/lasto/projects/wrangler/SECURITY.md) and [docs/security-model.md](/Users/lasto/projects/wrangler/docs/security-model.md) before using it in automation.
+`wrangle` is not a sandbox. It delegates execution trust to the selected backend executable and is careful about prompt logging, output buffering, and file-input gating. Read [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md) before using it in automation.
 
 ## Workspace layout
 
 - `crates/wrangle-core`: shared types and config model
 - `crates/wrangle-transport`: transport contracts and subprocess transport
 - `crates/wrangle-backends-cli`: CLI backend adapters
-- `crates/wrangle-runner`: reusable execution API and playbook helpers for callers such as tinbox
+- `crates/wrangle-runner`: reusable execution API and playbook helpers for downstream orchestration callers
 - `crates/wrangle-cli`: the `wrangle` binary
 - `resources/codewrapper-agent-rs`: preserved upstream-derived import snapshot
 
