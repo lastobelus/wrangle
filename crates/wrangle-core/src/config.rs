@@ -31,6 +31,8 @@ pub struct RuntimeConfig {
     pub max_events: usize,
     pub max_stderr_bytes: usize,
     pub max_parallel_workers: Option<usize>,
+    pub progress_file: Option<PathBuf>,
+    pub quiet_until_complete: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -51,6 +53,8 @@ impl Default for RuntimeConfig {
             max_events: 512,
             max_stderr_bytes: 32 * 1024,
             max_parallel_workers: None,
+            progress_file: None,
+            quiet_until_complete: false,
         }
     }
 }

@@ -1,0 +1,20 @@
+{
+  "name": "wrangle-local",
+  "interface": {
+    "displayName": "Wrangle Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "wrangle-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/wrangle-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

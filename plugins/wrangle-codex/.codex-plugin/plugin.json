@@ -1,0 +1,31 @@
+{
+  "name": "wrangle-codex",
+  "version": "0.1.0",
+  "description": "Offload Codex tasks through wrangle with consistent backend and model routing.",
+  "author": {
+    "name": "lastobelus and contributors",
+    "url": "https://github.com/lastobelus/wrangle"
+  },
+  "homepage": "https://github.com/lastobelus/wrangle/tree/main/docs/plugins",
+  "repository": "https://github.com/lastobelus/wrangle",
+  "license": "MIT",
+  "keywords": ["codex", "wrangle", "plugin", "agents", "offload"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Wrangle",
+    "shortDescription": "Route tasks through wrangle to other agent harnesses.",
+    "longDescription": "Use wrangle to offload Codex tasks to supported backends like Opencode, Claude, Gemini, Qwen, or Codex itself without narrating intermediate subprocess output.",
+    "developerName": "lastobelus",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/lastobelus/wrangle",
+    "privacyPolicyURL": "https://github.com/lastobelus/wrangle/blob/main/SECURITY.md",
+    "termsOfServiceURL": "https://github.com/lastobelus/wrangle/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Use wrangle to tell opencode to review this Rust crate.",
+      "Tell claude with claude-sonnet-4-6 to write release notes.",
+      "Review this repo. Use wrangle."
+    ],
+    "brandColor": "#1F6FEB"
+  }
+}

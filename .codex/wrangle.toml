@@ -1,0 +1,29 @@
+wrangle_command = ["cargo", "run", "-p", "wrangle-cli", "--"]
+timeout_secs = 7200
+default_permission_policy = "default"
+inherit_env = false
+pass_through_env = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "PATH",
+  "HOME"
+]
+
+[env]
+
+[backend_defaults.opencode]
+model = "zai-coding-plan/glm-5.1"
+
+[backend_defaults.claude]
+model = "claude-sonnet-4-6"
+
+[backend_defaults.gemini]
+model = "gemini-2.5-pro"
+
+[backend_defaults.qwen]
+model = "qwen3-coder-plus"
+
+[backend_defaults.codex]
+model = "openai/gpt-5.3-codex"

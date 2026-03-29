@@ -40,6 +40,7 @@ V1 implements `OneShotProcess` and keeps the interface stable for later persiste
 - `wrangle backends --json`: inspect backend capabilities and availability
 - `wrangle playbook land-work "..." --dry-run`: build the first playbook-oriented invocation path without executing it
 - `wrangle-runner`: the library crate for programmatic callers that want to preview or execute requests without shelling out to the `wrangle` binary. See [docs/runner-api.md](docs/runner-api.md) for the supported API surface and examples.
+- `plugins/wrangle-codex`: a repo-local Codex plugin for offloading tasks through `wrangle` with final-result-only handling. See [docs/plugins/wrangle-codex.md](docs/plugins/wrangle-codex.md).
 
 ## Security posture
 

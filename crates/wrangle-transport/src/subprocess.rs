@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
+use tokio::fs::{OpenOptions, create_dir_all};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -40,6 +42,43 @@ const REDUCED_ENV_VARS: &[&str] = &[
 
 #[derive(Debug, Default)]
 pub struct SubprocessTransport;
+
+struct ProgressWriter {
+    file: Option<tokio::fs::File>,
+}
+
+impl ProgressWriter {
+    async fn new(path: Option<&Path>) -> Result<Self> {
+        let Some(path) = path else {
+            return Ok(Self { file: None });
+        };
+
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            create_dir_all(parent).await?;
+        }
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await
+            .with_context(|| format!("failed to open progress file: {}", path.display()))?;
+
+        Ok(Self { file: Some(file) })
+    }
+
+    async fn write_json(&mut self, value: &serde_json::Value) -> Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Ok(());
+        };
+        let line = serde_json::to_vec(value)?;
+        file.write_all(&line).await?;
+        file.write_all(b"\n").await?;
+        Ok(())
+    }
+}
 
 fn build_process_env(
     config: &RuntimeConfig,
@@ -119,6 +158,7 @@ impl BackendTransport for SubprocessTransport {
     ) -> Result<ExecutionResult> {
         let started = Instant::now();
         let command = backend.build_command(config, &request, self.mode())?;
+        let mut progress = ProgressWriter::new(config.progress_file.as_deref()).await?;
 
         info!(
             backend = backend.descriptor().name,
@@ -128,6 +168,17 @@ impl BackendTransport for SubprocessTransport {
             stdin = command.stdin.is_some(),
             "Executing backend request"
         );
+
+        progress
+            .write_json(&serde_json::json!({
+                "type": "lifecycle",
+                "state": "started",
+                "backend": backend.descriptor().name,
+                "transport": "one-shot-process",
+                "workDir": command.current_dir.display().to_string(),
+                "hasSession": request.session.is_some(),
+            }))
+            .await?;
 
         let mut child = Command::new(command.program)
             .args(&command.args)
@@ -185,6 +236,14 @@ impl BackendTransport for SubprocessTransport {
             while let Some(item) = parser.next_event().await {
                 match item {
                     Ok(value) => {
+                        progress
+                            .write_json(&serde_json::json!({
+                                "type": "backendEvent",
+                                "backend": backend.descriptor().name,
+                                "transport": "one-shot-process",
+                                "payload": value,
+                            }))
+                            .await?;
                         if events.len() < max_events {
                             if let Some(id) = extract_session_id(&value) {
                                 session = Some(SessionHandle {
@@ -201,24 +260,66 @@ impl BackendTransport for SubprocessTransport {
                         }
                     }
                     Err(err) => {
+                        progress
+                            .write_json(&serde_json::json!({
+                                "type": "parseError",
+                                "backend": backend.descriptor().name,
+                                "message": err.to_string(),
+                            }))
+                            .await?;
                         warn!(backend = backend.descriptor().name, error = %err, "Failed to parse backend output");
                     }
                 }
             }
+            Ok::<(), anyhow::Error>(())
         })
         .await;
 
-        if parse.is_err() {
-            warn!(
-                backend = backend.descriptor().name,
-                timeout_secs, "Task timed out"
-            );
-            let _ = child.kill().await;
+        match parse {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return Err(err),
+            Err(_) => {
+                progress
+                    .write_json(&serde_json::json!({
+                        "type": "lifecycle",
+                        "state": "timeout",
+                        "backend": backend.descriptor().name,
+                        "timeoutSecs": timeout_secs,
+                    }))
+                    .await?;
+                warn!(
+                    backend = backend.descriptor().name,
+                    timeout_secs, "Task timed out"
+                );
+                let _ = child.kill().await;
+            }
         }
 
         let status = child.wait().await?;
         let exit_code = status.code().unwrap_or(-1);
         let (stderr_excerpt, stderr_truncated) = stderr_task.await.unwrap_or_default();
+
+        if let Some(stderr) = (!stderr_excerpt.is_empty()).then_some(stderr_excerpt.as_str()) {
+            progress
+                .write_json(&serde_json::json!({
+                    "type": "stderrSummary",
+                    "backend": backend.descriptor().name,
+                    "truncated": stderr_truncated,
+                    "excerpt": stderr,
+                }))
+                .await?;
+        }
+
+        progress
+            .write_json(&serde_json::json!({
+                "type": "lifecycle",
+                "state": "completed",
+                "backend": backend.descriptor().name,
+                "success": status.success(),
+                "exitCode": exit_code,
+                "durationMs": started.elapsed().as_millis(),
+            }))
+            .await?;
 
         Ok(ExecutionResult {
             success: status.success(),
@@ -258,6 +359,31 @@ pub fn request_to_target(request: &ExecutionRequest) -> Result<(String, Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn progress_writer_appends_json_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "wrangle-progress-writer-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut writer = ProgressWriter::new(Some(path.as_path())).await.unwrap();
+
+        writer
+            .write_json(&serde_json::json!({"type":"test","value":1}))
+            .await
+            .unwrap();
+        writer
+            .write_json(&serde_json::json!({"type":"test","value":2}))
+            .await
+            .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"value\":1"));
+        assert!(content.contains("\"value\":2"));
+
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn uses_stdin_for_shell_sensitive_input() {

@@ -120,6 +120,21 @@ struct Cli {
     #[arg(long, default_value = "32768", env = "WRANGLE_MAX_STDERR_BYTES")]
     max_stderr_bytes: usize,
 
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Write intermediate backend events to this file as JSON Lines.",
+        env = "WRANGLE_PROGRESS_FILE"
+    )]
+    progress_file: Option<String>,
+
+    #[arg(
+        long,
+        help = "Suppress wrangle's own non-final stderr logging until the final stdout result is ready.",
+        env = "WRANGLE_QUIET_UNTIL_COMPLETE"
+    )]
+    quiet_until_complete: bool,
+
     #[arg(long, env = "WRANGLE_MAX_PARALLEL_WORKERS")]
     max_parallel_workers: Option<usize>,
 
@@ -182,7 +197,7 @@ fn setup_logging(cli: &Cli) -> Result<Option<WorkerGuard>> {
         .with(env_filter)
         .with(fmt::layer().with_writer(non_blocking).with_ansi(false));
 
-    if cli.quiet {
+    if cli.quiet || cli.quiet_until_complete {
         subscriber.init();
     } else {
         subscriber
@@ -218,6 +233,8 @@ fn runtime_config_from_cli(cli: &Cli, workdir: Option<&str>, mode: RuntimeMode) 
         max_events: cli.max_events,
         max_stderr_bytes: cli.max_stderr_bytes,
         max_parallel_workers: cli.max_parallel_workers,
+        progress_file: cli.progress_file.as_ref().map(PathBuf::from),
+        quiet_until_complete: cli.quiet_until_complete,
     }
 }
 
