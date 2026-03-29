@@ -44,4 +44,6 @@ pub enum ExecutionError {
     UnsupportedTransport { backend: String, transport: String },
     #[error("transport mode '{0}' is not implemented yet")]
     UnimplementedTransport(String),
+    #[error("backend '{backend}' does not support permission policy '{policy}'")]
+    UnsupportedPermissionPolicy { backend: String, policy: String },
 }

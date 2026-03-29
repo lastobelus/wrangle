@@ -37,10 +37,24 @@ Less-trusted or externally supplied inputs:
 
 `wrangle` models permissions through `PermissionPolicy`, then maps that model to backend-specific flags:
 
-- `Default`: backend default approval behavior
-- `Bypass`: request broad automation mode where the backend supports it
+- `Default`: backend default approval behavior — no flag applied, backend decides
+- `Ask`: explicitly request interactive approval before each action
+- `Auto`: semi-automatic mode — the backend proceeds with safe operations and asks before destructive ones
+- `Bypass`: request full automation mode where the backend supports it
 
-This abstraction is intentionally small in v1 so it can stay stable across CLI and future API transports.
+Not every backend supports every policy. Capability reporting (`available_backends()`, `wrangle backends`) lists the supported policies per backend so callers can decide before execution. Unsupported combinations produce a clear `UnsupportedPermissionPolicy` error rather than silently degrading.
+
+### Backend policy support
+
+| Backend | Default | Ask | Auto | Bypass |
+|---------|---------|-----|------|--------|
+| Codex   | yes     | yes | yes  | yes    |
+| Claude  | yes     | yes | —    | yes    |
+| Gemini  | yes     | yes | —    | yes    |
+| Qwen    | yes     | yes | —    | yes    |
+| Opencode| yes     | yes | —    | —      |
+
+`Bypass` is only advertised where there is a defensible backend-native full-auto equivalent. `Ask` and `Auto` are only advertised where the semantics are clear enough to explain and test.
 
 ## Persistent transports
 

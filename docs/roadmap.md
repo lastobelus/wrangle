@@ -77,6 +77,8 @@ The current recommended implementation order is:
 5. Add API-backed backends behind the same execution model.
 6. Implement the native `WrangleServer` transport after the other abstractions have been exercised.
 
+Steps 1 and 2 are complete. The permission model now supports four policies (`Default`, `Ask`, `Auto`, `Bypass`) with per-backend capability advertising and explicit rejection of unsupported combinations.
+
 ## What success looks like
 
 A mature `wrangle` should make it possible for a downstream caller to:

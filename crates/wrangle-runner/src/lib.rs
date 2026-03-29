@@ -51,7 +51,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::task::JoinSet;
-use wrangle_backends_cli::{backend_capabilities, ensure_transport_supported, select_cli_backend};
+use wrangle_backends_cli::{
+    backend_capabilities, ensure_permission_supported, ensure_transport_supported,
+    select_cli_backend,
+};
 use wrangle_core::{
     AgentBackend, BackendTransport, ExecutionError, ExecutionRequest, ExecutionResult,
     ParallelTaskSpec, PermissionPolicy, RuntimeConfig, TransportMode, ensure_parallel_tasks,
@@ -412,6 +415,7 @@ async fn build_execution_plan(
     resolve_agent_for_runtime_config(&mut config).await?;
     let backend = select_cli_backend(config.backend.as_deref())?;
     ensure_transport_supported(&backend, config.transport_mode)?;
+    ensure_permission_supported(&backend, request.permission_policy)?;
     let descriptor = backend.descriptor();
     let command = backend.build_command(&config, &request, config.transport_mode)?;
 
@@ -452,6 +456,7 @@ pub async fn execute_request(
     resolve_agent_for_runtime_config(&mut config).await?;
     let backend = select_cli_backend(config.backend.as_deref())?;
     ensure_transport_supported(&backend, config.transport_mode)?;
+    ensure_permission_supported(&backend, request.permission_policy)?;
 
     match config.transport_mode {
         TransportMode::OneShotProcess => {

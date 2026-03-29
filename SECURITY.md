@@ -15,6 +15,7 @@ If you find a security issue, please report it privately to the maintainer befor
 - Gate file-based prompt ingestion from external task specs
 - Keep environment inheritance narrow by default
 - Preserve a clean trust model around transports and sessions
+- Advertise per-backend permission policy support and reject unsupported combinations explicitly
 
 ## Non-goals
 

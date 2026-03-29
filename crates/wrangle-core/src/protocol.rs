@@ -41,6 +41,8 @@ pub enum TransportMode {
 pub enum PermissionPolicy {
     #[default]
     Default,
+    Ask,
+    Auto,
     Bypass,
 }
 
@@ -48,6 +50,8 @@ impl PermissionPolicy {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
+            Self::Ask => "ask",
+            Self::Auto => "auto",
             Self::Bypass => "bypass",
         }
     }

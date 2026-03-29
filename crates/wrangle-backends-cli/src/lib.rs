@@ -15,12 +15,26 @@ const ONE_SHOT_AND_PERSISTENT: &[TransportMode] = &[
     TransportMode::OneShotProcess,
     TransportMode::PersistentBackend,
 ];
-const DEFAULT_AND_BYPASS: &[PermissionPolicy] =
-    &[PermissionPolicy::Default, PermissionPolicy::Bypass];
-const DEFAULT_ONLY: &[PermissionPolicy] = &[PermissionPolicy::Default];
+const ALL_POLICIES: &[PermissionPolicy] = &[
+    PermissionPolicy::Default,
+    PermissionPolicy::Ask,
+    PermissionPolicy::Auto,
+    PermissionPolicy::Bypass,
+];
+const DEFAULT_AND_ASK: &[PermissionPolicy] = &[PermissionPolicy::Default, PermissionPolicy::Ask];
+const DEFAULT_ASK_AND_BYPASS: &[PermissionPolicy] = &[
+    PermissionPolicy::Default,
+    PermissionPolicy::Ask,
+    PermissionPolicy::Bypass,
+];
 
 impl CliBackend {
     fn new(kind: BackendKind, supports_persistent_backend: bool) -> Self {
+        let permission_policies: &'static [PermissionPolicy] = match kind {
+            BackendKind::Codex => ALL_POLICIES,
+            BackendKind::Claude | BackendKind::Gemini | BackendKind::Qwen => DEFAULT_ASK_AND_BYPASS,
+            BackendKind::Opencode => DEFAULT_AND_ASK,
+        };
         Self {
             descriptor: BackendDescriptor {
                 kind,
@@ -32,11 +46,7 @@ impl CliBackend {
                 },
                 supports_resume: true,
                 supports_persistent_backend,
-                permission_policies: if kind == BackendKind::Opencode {
-                    DEFAULT_ONLY
-                } else {
-                    DEFAULT_AND_BYPASS
-                },
+                permission_policies,
             },
         }
     }
@@ -45,11 +55,17 @@ impl CliBackend {
 fn map_permission_flag(kind: BackendKind, permission: PermissionPolicy) -> Option<&'static str> {
     match (kind, permission) {
         (_, PermissionPolicy::Default) => None,
+        (_, PermissionPolicy::Ask) => None,
+        (BackendKind::Codex, PermissionPolicy::Auto) => Some("--auto-edit"),
         (BackendKind::Codex, PermissionPolicy::Bypass) => Some("--full-auto"),
         (BackendKind::Claude, PermissionPolicy::Bypass) => Some("--dangerously-skip-permissions"),
         (BackendKind::Gemini, PermissionPolicy::Bypass) => Some("-y"),
         (BackendKind::Qwen, PermissionPolicy::Bypass) => Some("-y"),
-        (BackendKind::Opencode, PermissionPolicy::Bypass) => None,
+        (BackendKind::Opencode, PermissionPolicy::Auto)
+        | (BackendKind::Opencode, PermissionPolicy::Bypass)
+        | (BackendKind::Claude, PermissionPolicy::Auto)
+        | (BackendKind::Gemini, PermissionPolicy::Auto)
+        | (BackendKind::Qwen, PermissionPolicy::Auto) => None,
     }
 }
 
@@ -208,6 +224,17 @@ pub fn ensure_transport_supported(backend: &CliBackend, mode: TransportMode) -> 
             TransportMode::WrangleServer => "wrangle-server",
         }
         .to_string(),
+    }
+    .into())
+}
+
+pub fn ensure_permission_supported(backend: &CliBackend, policy: PermissionPolicy) -> Result<()> {
+    if backend.descriptor.permission_policies.contains(&policy) {
+        return Ok(());
+    }
+    Err(ExecutionError::UnsupportedPermissionPolicy {
+        backend: backend.descriptor.name.to_string(),
+        policy: policy.as_str().to_string(),
     }
     .into())
 }

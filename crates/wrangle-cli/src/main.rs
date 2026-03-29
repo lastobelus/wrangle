@@ -36,6 +36,8 @@ impl From<TransportArg> for TransportMode {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum PermissionArg {
     Default,
+    Ask,
+    Auto,
     Bypass,
 }
 
@@ -43,6 +45,8 @@ impl From<PermissionArg> for PermissionPolicy {
     fn from(value: PermissionArg) -> Self {
         match value {
             PermissionArg::Default => PermissionPolicy::Default,
+            PermissionArg::Ask => PermissionPolicy::Ask,
+            PermissionArg::Auto => PermissionPolicy::Auto,
             PermissionArg::Bypass => PermissionPolicy::Bypass,
         }
     }
