@@ -28,9 +28,19 @@
 //!
 //! // Preview and execute a request
 //! let config = RuntimeConfig::default();
-//! let request = ExecutionRequest::simple("Fix the bug", "/tmp/project");
-//! let plan = Runner::new(config).preview(request).await?;
 //! let result = Runner::new(config).execute_task("Fix the bug").await?;
+//!
+//! // Or build a structured request for full control:
+//! let request = ExecutionRequest {
+//!     task: "Fix the bug".to_string(),
+//!     work_dir: std::path::PathBuf::from("/tmp/project"),
+//!     model: None,
+//!     session: None,
+//!     permission_policy: PermissionPolicy::Default,
+//!     prompt_file: None,
+//!     extra_env: std::collections::HashMap::new(),
+//! };
+//! let plan = Runner::new(config).preview(request).await?;
 //! ```
 //!
 //! # Stable API surface
@@ -56,8 +66,7 @@ use wrangle_backends_cli::{
     select_cli_backend,
 };
 use wrangle_core::{
-    AgentBackend, BackendTransport, ExecutionError, ExecutionRequest, ExecutionResult,
-    ParallelTaskSpec, PermissionPolicy, RuntimeConfig, TransportMode, ensure_parallel_tasks,
+    AgentBackend, BackendTransport, ExecutionError, ensure_parallel_tasks,
     get_default_max_parallel_workers, resolve_agent_for_runtime_config,
 };
 use wrangle_transport::SubprocessTransport;
@@ -65,10 +74,8 @@ use wrangle_transport::SubprocessTransport;
 // Re-export core types so downstream callers only need wrangle-runner.
 pub use wrangle_core::{
     BackendCapabilities, BackendDescriptor, BackendKind, CommandSpec, ExecutionEvent,
-    ExecutionRequest as CoreExecutionRequest, ExecutionResult as CoreExecutionResult,
-    ParallelConfig, ParallelTaskSpec as CoreParallelTaskSpec,
-    PermissionPolicy as CorePermissionPolicy, RuntimeConfig as CoreRuntimeConfig, RuntimeMode,
-    SessionHandle, SessionState, TransportMode as CoreTransportMode,
+    ExecutionRequest, ExecutionResult, ParallelConfig, ParallelTaskSpec, PermissionPolicy,
+    RuntimeConfig, RuntimeMode, SessionHandle, SessionState, TransportMode,
 };
 
 // ---------------------------------------------------------------------------

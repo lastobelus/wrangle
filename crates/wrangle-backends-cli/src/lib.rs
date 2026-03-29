@@ -17,23 +17,19 @@ const ONE_SHOT_AND_PERSISTENT: &[TransportMode] = &[
 ];
 const ALL_POLICIES: &[PermissionPolicy] = &[
     PermissionPolicy::Default,
-    PermissionPolicy::Ask,
     PermissionPolicy::Auto,
     PermissionPolicy::Bypass,
 ];
-const DEFAULT_AND_ASK: &[PermissionPolicy] = &[PermissionPolicy::Default, PermissionPolicy::Ask];
-const DEFAULT_ASK_AND_BYPASS: &[PermissionPolicy] = &[
-    PermissionPolicy::Default,
-    PermissionPolicy::Ask,
-    PermissionPolicy::Bypass,
-];
+const DEFAULT_ONLY: &[PermissionPolicy] = &[PermissionPolicy::Default];
+const DEFAULT_AND_BYPASS: &[PermissionPolicy] =
+    &[PermissionPolicy::Default, PermissionPolicy::Bypass];
 
 impl CliBackend {
     fn new(kind: BackendKind, supports_persistent_backend: bool) -> Self {
         let permission_policies: &'static [PermissionPolicy] = match kind {
             BackendKind::Codex => ALL_POLICIES,
-            BackendKind::Claude | BackendKind::Gemini | BackendKind::Qwen => DEFAULT_ASK_AND_BYPASS,
-            BackendKind::Opencode => DEFAULT_AND_ASK,
+            BackendKind::Claude | BackendKind::Gemini | BackendKind::Qwen => DEFAULT_AND_BYPASS,
+            BackendKind::Opencode => DEFAULT_ONLY,
         };
         Self {
             descriptor: BackendDescriptor {

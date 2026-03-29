@@ -38,23 +38,23 @@ Less-trusted or externally supplied inputs:
 `wrangle` models permissions through `PermissionPolicy`, then maps that model to backend-specific flags:
 
 - `Default`: backend default approval behavior — no flag applied, backend decides
-- `Ask`: explicitly request interactive approval before each action
+- `Ask`: explicitly request interactive approval before each action (reserved; not yet mapped to any backend flag)
 - `Auto`: semi-automatic mode — the backend proceeds with safe operations and asks before destructive ones
 - `Bypass`: request full automation mode where the backend supports it
 
-Not every backend supports every policy. Capability reporting (`available_backends()`, `wrangle backends`) lists the supported policies per backend so callers can decide before execution. Unsupported combinations produce a clear `UnsupportedPermissionPolicy` error rather than silently degrading.
+Not every backend supports every policy. Capability reporting (`available_backends()`, `wrangle backends`) lists the supported policies per backend so callers can decide before execution. Unsupported combinations produce a clear `UnsupportedPermissionPolicy` error rather than silently degrading. `Ask` is not currently advertised for any backend because no backend has a distinct flag mapping for it; using `Ask` will result in a policy-not-supported error.
 
 ### Backend policy support
 
 | Backend | Default | Ask | Auto | Bypass |
 |---------|---------|-----|------|--------|
-| Codex   | yes     | yes | yes  | yes    |
-| Claude  | yes     | yes | —    | yes    |
-| Gemini  | yes     | yes | —    | yes    |
-| Qwen    | yes     | yes | —    | yes    |
-| Opencode| yes     | yes | —    | —      |
+| Codex   | yes     | —   | yes  | yes    |
+| Claude  | yes     | —   | —    | yes    |
+| Gemini  | yes     | —   | —    | yes    |
+| Qwen    | yes     | —   | —    | yes    |
+| Opencode| yes     | —   | —    | —      |
 
-`Bypass` is only advertised where there is a defensible backend-native full-auto equivalent. `Ask` and `Auto` are only advertised where the semantics are clear enough to explain and test.
+`Bypass` is only advertised where there is a defensible backend-native full-auto equivalent. `Ask` is not advertised because it currently maps to no distinct backend flag. `Auto` is only advertised where the semantics are clear enough to explain and test.
 
 ## Persistent transports
 
