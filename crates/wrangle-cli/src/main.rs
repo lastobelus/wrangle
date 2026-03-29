@@ -92,6 +92,7 @@ struct Cli {
         long,
         value_enum,
         default_value = "default",
+        help = "Permission policy to request. Note: 'ask' is reserved and currently unsupported by all backends; 'auto' is currently only supported by Codex.",
         env = "WRANGLE_PERMISSION_POLICY"
     )]
     permission_policy: PermissionArg,

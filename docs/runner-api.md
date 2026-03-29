@@ -81,7 +81,7 @@ println!("backend: {} (available: {})", plan.backend.name, plan.backend.availabl
 ### Execute a request
 
 ```rust
-use wrangle_runner::{Runner, RuntimeConfig};
+use wrangle_runner::{ExecutionRequest, PermissionPolicy, Runner, RuntimeConfig};
 
 let runner = Runner::new(RuntimeConfig {
     backend: Some("qwen".to_string()),
@@ -144,6 +144,60 @@ let result = runner.execute_playbook(invocation).await?;
 println!("success: {}", result.success);
 ```
 
+### Execute tasks in parallel
+
+Use `ParallelTaskSpec` when an orchestration caller wants to schedule multiple
+requests with explicit dependency ordering:
+
+```rust
+use wrangle_runner::{NamedExecutionResult, ParallelTaskSpec, PermissionPolicy, Runner, RuntimeConfig};
+use std::path::PathBuf;
+
+let runner = Runner::new(RuntimeConfig {
+    backend: Some("qwen".to_string()),
+    work_dir: PathBuf::from("/my/project"),
+    ..RuntimeConfig::default()
+});
+
+let tasks = vec![
+    ParallelTaskSpec {
+        id: "plan".to_string(),
+        task: "inspect the repo and propose a plan".to_string(),
+        work_dir: None,
+        dependencies: vec![],
+        session_id: None,
+        backend: None,
+        model: None,
+        agent: None,
+        prompt_file: None,
+        permission_policy: Some(PermissionPolicy::Default),
+        transport_mode: None,
+    },
+    ParallelTaskSpec {
+        id: "implement".to_string(),
+        task: "implement the approved plan".to_string(),
+        work_dir: None,
+        dependencies: vec!["plan".to_string()],
+        session_id: None,
+        backend: None,
+        model: None,
+        agent: None,
+        prompt_file: None,
+        permission_policy: Some(PermissionPolicy::Bypass),
+        transport_mode: None,
+    },
+];
+
+let results: Vec<NamedExecutionResult> = runner.execute_parallel(tasks).await?;
+for result in &results {
+    println!("{} => success={}", result.id, result.result.success);
+}
+```
+
+`execute_parallel` validates dependency structure and backend capability support
+before it starts spawning work, so unsupported permission policies fail before
+partially executing any tasks.
+
 ### Resume a session
 
 ```rust
@@ -191,6 +245,14 @@ match runner.execute_task("do something").await {
 }
 ```
 
+Common errors a caller should expect include:
+
+- `BackendError::NotFound`: the requested backend name is unknown
+- `BackendError::NotAvailable`: the backend is known but not installed on `PATH`
+- `ExecutionError::UnsupportedTransport`: the backend cannot honor the requested transport
+- `ExecutionError::UnsupportedPermissionPolicy`: the backend cannot honor the requested permission policy
+- `ExecutionError::CircularDependency`: a parallel task graph cannot make progress
+
 ## Stable API surface
 
 The following are considered the stable, documented public API:
@@ -207,7 +269,7 @@ The following are considered the stable, documented public API:
 | `Runner::preview_task(task)` | Convenience preview for a task string |
 | `Runner::execute(request)` | Execute a structured request |
 | `Runner::execute_task(task)` | Convenience execute for a task string |
-| `Runner::execute_parallel(tasks)` | Execute tasks in parallel |
+| `Runner::execute_parallel(tasks)` | Execute tasks in parallel with dependencies |
 | `Runner::plan_playbook(invocation)` | Build a playbook plan for inspection |
 | `Runner::execute_playbook(invocation)` | Build and execute a playbook |
 | `available_backends()` | Standalone: list backends |
@@ -216,8 +278,8 @@ The following are considered the stable, documented public API:
 | `preview_request(config, request)` | Standalone: preview execution |
 | `execute_request(config, request)` | Standalone: execute request |
 | `execute_parallel(config, tasks)` | Standalone: parallel execution |
-| `build_playbook(config, invocation)` | Build config + request for a playbook |
-| `build_playbook_plan(config, invocation)` | Build a playbook plan for inspection |
+| `build_playbook(base_config, invocation)` | Build config + request for a playbook |
+| `build_playbook_plan(base_config, invocation)` | Build a playbook plan for inspection |
 | `CommandPreview` | Command that would be executed |
 | `ExecutionPlan` | Full execution plan from preview |
 | `PlaybookInvocation` | Request to run a named playbook |

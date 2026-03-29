@@ -23,6 +23,8 @@ For the product-level direction and issue framing, see [docs/roadmap.md](docs/ro
 - Opencode
 - Qwen
 
+Qwen note: when invoked through `wrangle`, Qwen only gets file-write tools if the request uses an edit-capable approval mode. Today that means `--permission-policy bypass`, which `wrangle` maps to Qwen's `-y` / YOLO mode. If Qwen auth comes from the shell environment, also use `--inherit-env`. See [docs/qwen-write-access.md](docs/qwen-write-access.md).
+
 ## Transport model
 
 `wrangle` distinguishes backend identity from transport identity:
@@ -37,11 +39,13 @@ V1 implements `OneShotProcess` and keeps the interface stable for later persiste
 
 - `wrangle backends --json`: inspect backend capabilities and availability
 - `wrangle playbook land-work "..." --dry-run`: build the first playbook-oriented invocation path without executing it
-- `wrangle-runner`: the library crate for programmatic callers that want to preview or execute requests without shelling out to the `wrangle` binary
+- `wrangle-runner`: the library crate for programmatic callers that want to preview or execute requests without shelling out to the `wrangle` binary. See [docs/runner-api.md](docs/runner-api.md) for the supported API surface and examples.
 
 ## Security posture
 
 `wrangle` is not a sandbox. It delegates execution trust to the selected backend executable and is careful about prompt logging, output buffering, and file-input gating. Read [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md) before using it in automation.
+
+If you are running `wrangle` inside another sandboxed host such as Codex, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Workspace layout
 

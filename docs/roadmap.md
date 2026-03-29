@@ -79,6 +79,17 @@ The current recommended implementation order is:
 
 Steps 1 and 2 are complete. The permission model now supports four policies (`Default`, `Ask`, `Auto`, `Bypass`) with per-backend capability advertising and explicit rejection of unsupported combinations.
 
+## Near-term operational work
+
+Before the project puts more weight on parallel hardening, there is a small but important slice of v2 CLI work around sandboxed-host operability.
+
+This work belongs in the v2 CLI track between completed step 2 and current step 3 because it directly affects whether downstream callers can run `wrangle` reliably inside tools such as Codex, CI agents, and other sandboxed automation hosts.
+
+- [#8 Support project-local wrangle config discovery](https://github.com/lastobelus/wrangle/issues/8)
+- [#9 Make wrangle log directory configurable](https://github.com/lastobelus/wrangle/issues/9)
+
+These are not transport features and they do not change the core execution model, but they remove avoidable home-directory coupling that currently makes sandbox integration harder than it should be.
+
 ## What success looks like
 
 A mature `wrangle` should make it possible for a downstream caller to:

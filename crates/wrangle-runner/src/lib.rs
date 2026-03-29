@@ -18,7 +18,7 @@
 //! # Quick start
 //!
 //! ```ignore
-//! use wrangle_runner::{Runner, RuntimeConfig, ExecutionRequest, PlaybookInvocation, PlaybookName};
+//! use wrangle_runner::{ExecutionRequest, PermissionPolicy, Runner, RuntimeConfig};
 //!
 //! // Inspect what backends are available
 //! let backends = Runner::available_backends();
@@ -28,7 +28,8 @@
 //!
 //! // Preview and execute a request
 //! let config = RuntimeConfig::default();
-//! let result = Runner::new(config).execute_task("Fix the bug").await?;
+//! let runner = Runner::new(config.clone());
+//! let result = runner.execute_task("Fix the bug").await?;
 //!
 //! // Or build a structured request for full control:
 //! let request = ExecutionRequest {
@@ -345,6 +346,16 @@ fn build_playbook_task(name: PlaybookName, task: &str) -> String {
     }
 }
 
+fn ensure_request_supported(
+    backend: &wrangle_backends_cli::CliBackend,
+    config: &RuntimeConfig,
+    request: &ExecutionRequest,
+) -> Result<()> {
+    ensure_transport_supported(backend, config.transport_mode)?;
+    ensure_permission_supported(backend, request.permission_policy)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Standalone functions (stateless API)
 // ---------------------------------------------------------------------------
@@ -421,8 +432,7 @@ async fn build_execution_plan(
 ) -> Result<ExecutionPlan> {
     resolve_agent_for_runtime_config(&mut config).await?;
     let backend = select_cli_backend(config.backend.as_deref())?;
-    ensure_transport_supported(&backend, config.transport_mode)?;
-    ensure_permission_supported(&backend, request.permission_policy)?;
+    ensure_request_supported(&backend, &config, &request)?;
     let descriptor = backend.descriptor();
     let command = backend.build_command(&config, &request, config.transport_mode)?;
 
@@ -462,8 +472,7 @@ pub async fn execute_request(
 ) -> Result<ExecutionResult> {
     resolve_agent_for_runtime_config(&mut config).await?;
     let backend = select_cli_backend(config.backend.as_deref())?;
-    ensure_transport_supported(&backend, config.transport_mode)?;
-    ensure_permission_supported(&backend, request.permission_policy)?;
+    ensure_request_supported(&backend, &config, &request)?;
 
     match config.transport_mode {
         TransportMode::OneShotProcess => {
@@ -493,6 +502,19 @@ pub async fn execute_parallel(
     };
     ensure_parallel_tasks(&parsed)?;
     resolve_agent_for_runtime_config(&mut config).await?;
+
+    for spec in &parsed.tasks {
+        let mut task_config = config.clone();
+        task_config.backend = spec.backend.clone().or_else(|| config.backend.clone());
+        task_config.agent = spec.agent.clone().or_else(|| config.agent.clone());
+        task_config.model = spec.model.clone().or_else(|| config.model.clone());
+        task_config.transport_mode = spec.transport_mode.unwrap_or(config.transport_mode);
+        task_config.permission_policy = spec.permission_policy.unwrap_or(config.permission_policy);
+
+        let request = spec.to_request(&task_config)?;
+        let backend = select_cli_backend(task_config.backend.as_deref())?;
+        ensure_request_supported(&backend, &task_config, &request)?;
+    }
 
     let max_workers = config
         .max_parallel_workers
@@ -907,6 +929,34 @@ mod tests {
         };
         let plan = preview_request(config, request).await.unwrap();
         assert!(plan.command.args.contains(&"-y".to_string()));
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_rejects_unsupported_permission_before_spawning() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let task = ParallelTaskSpec {
+            id: "a".to_string(),
+            task: "do work".to_string(),
+            work_dir: None,
+            dependencies: vec![],
+            session_id: None,
+            backend: None,
+            model: None,
+            agent: None,
+            prompt_file: None,
+            permission_policy: Some(PermissionPolicy::Ask),
+            transport_mode: None,
+        };
+
+        let err = execute_parallel(config, vec![task]).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not support permission policy 'ask'")
+        );
     }
 
     fn minimal_task_spec(id: &str, task: &str) -> ParallelTaskSpec {
