@@ -180,6 +180,18 @@ pub fn ensure_parallel_tasks(config: &ParallelConfig) -> Result<()> {
         bail!("no tasks provided for parallel execution");
     }
 
+    for task in &config.tasks {
+        if task.id.trim().is_empty() {
+            return Err(ConfigError::EmptyTaskId.into());
+        }
+        if task.task.trim().is_empty() {
+            return Err(ConfigError::EmptyTask {
+                id: task.id.clone(),
+            }
+            .into());
+        }
+    }
+
     let task_ids: HashSet<&str> = config.tasks.iter().map(|task| task.id.as_str()).collect();
     if task_ids.len() != config.tasks.len() {
         let mut seen = HashSet::new();
@@ -202,10 +214,22 @@ pub fn ensure_parallel_tasks(config: &ParallelConfig) -> Result<()> {
                 return Err(ConfigError::SelfDependency(task.id.clone()).into());
             }
             if !task_ids.contains(dependency.as_str()) {
-                return Err(ConfigError::UnknownDependency(dependency.clone()).into());
+                return Err(ConfigError::UnknownDependency {
+                    task_id: task.id.clone(),
+                    dependency: dependency.clone(),
+                }
+                .into());
             }
         }
     }
+
+    let graph: Vec<(String, Vec<String>)> = config
+        .tasks
+        .iter()
+        .map(|t| (t.id.clone(), t.dependencies.clone()))
+        .collect();
+    crate::task_graph::detect_cycle(&graph)?;
+
     Ok(())
 }
 

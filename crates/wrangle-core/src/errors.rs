@@ -10,10 +10,16 @@ pub enum ConfigError {
     EmptyTaskFromStdin,
     #[error("duplicate parallel task id: {0}")]
     DuplicateTaskId(String),
-    #[error("parallel task depends on an unknown task id: {0}")]
-    UnknownDependency(String),
+    #[error("task '{task_id}' depends on unknown task id '{dependency}'")]
+    UnknownDependency { task_id: String, dependency: String },
     #[error("parallel task cannot depend on itself: {0}")]
     SelfDependency(String),
+    #[error("circular dependency detected: {cycle}")]
+    CircularDependency { cycle: String },
+    #[error("parallel task id must be non-empty")]
+    EmptyTaskId,
+    #[error("parallel task must have a non-empty 'task' field (id='{id}')")]
+    EmptyTask { id: String },
 }
 
 #[derive(Debug, Error)]

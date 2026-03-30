@@ -2,6 +2,7 @@ pub mod agent_config;
 pub mod config;
 pub mod errors;
 pub mod protocol;
+pub mod task_graph;
 
 pub use agent_config::{
     AgentConfig, ModelsConfig, apply_agent_to_runtime_config, default_models_config,

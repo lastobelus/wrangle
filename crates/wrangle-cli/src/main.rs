@@ -11,7 +11,7 @@ use wrangle_core::{
 };
 use wrangle_runner::{
     PlaybookInvocation, PlaybookName, available_backends, build_playbook_plan, execute_parallel,
-    execute_request, preview_request,
+    execute_request, preview_parallel, preview_request,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -332,13 +332,15 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         None if cli.parallel => {
-            if cli.dry_run {
-                bail!("--dry-run is not supported with --parallel");
-            }
             let config = runtime_config_from_cli(&cli, None, RuntimeMode::New);
             let parsed = parse_parallel_config().await?;
-            let results = execute_parallel(config, parsed.tasks).await?;
-            println!("{}", serde_json::to_string_pretty(&results)?);
+            if cli.dry_run {
+                let plan = preview_parallel(config, parsed.tasks).await?;
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                let results = execute_parallel(config, parsed.tasks).await?;
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            }
             return Ok(());
         }
         None => {

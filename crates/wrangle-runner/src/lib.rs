@@ -68,7 +68,7 @@ use wrangle_backends_cli::{
 };
 use wrangle_core::{
     AgentBackend, BackendTransport, ExecutionError, ensure_parallel_tasks,
-    get_default_max_parallel_workers, resolve_agent_for_runtime_config,
+    get_default_max_parallel_workers, resolve_agent_for_runtime_config, task_graph,
 };
 use wrangle_transport::SubprocessTransport;
 
@@ -120,6 +120,32 @@ pub struct ExecutionPlan {
 pub struct NamedExecutionResult {
     pub id: String,
     pub result: ExecutionResult,
+}
+
+/// A planning preview for parallel execution, showing the execution phases
+/// and resolved configuration without spawning any work.
+///
+/// Returned by [`preview_parallel()`] and [`Runner::preview_parallel()`]
+/// so callers can inspect the dependency ordering and resource allocation
+/// before committing to execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParallelPlan {
+    pub task_count: usize,
+    pub max_workers: usize,
+    pub phases: Vec<Vec<String>>,
+    pub tasks: Vec<ParallelTaskPreview>,
+}
+
+/// A single task's resolved configuration within a parallel plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParallelTaskPreview {
+    pub id: String,
+    pub backend: String,
+    pub transport: TransportMode,
+    pub permission_policy: PermissionPolicy,
+    pub dependencies: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +329,15 @@ impl Runner {
         tasks: Vec<ParallelTaskSpec>,
     ) -> Result<Vec<NamedExecutionResult>> {
         execute_parallel(self.config.clone(), tasks).await
+    }
+
+    /// Preview a parallel execution plan without spawning any work.
+    ///
+    /// Validates the task graph (duplicate ids, unknown deps, cycles),
+    /// resolves backends and permission policies, and returns the execution
+    /// phases and resolved per-task configuration.
+    pub async fn preview_parallel(&self, tasks: Vec<ParallelTaskSpec>) -> Result<ParallelPlan> {
+        preview_parallel(self.config.clone(), tasks).await
     }
 
     // -- Playbook workflows ---------------------------------------------------
@@ -584,6 +619,65 @@ pub async fn execute_parallel(
             })
         })
         .collect())
+}
+
+/// Preview a parallel execution plan without spawning any work.
+///
+/// Validates the full task graph, resolves backends and per-task configuration,
+/// and returns a [`ParallelPlan`] containing the execution phases and resolved
+/// settings for each task.
+///
+/// This is the primary dry-run entry point for parallel execution. It performs
+/// the same validation as [`execute_parallel()`] but stops before spawning
+/// any backend processes.
+pub async fn preview_parallel(
+    mut config: RuntimeConfig,
+    tasks: Vec<ParallelTaskSpec>,
+) -> Result<ParallelPlan> {
+    let parsed = wrangle_core::ParallelConfig {
+        tasks: tasks.clone(),
+    };
+    ensure_parallel_tasks(&parsed)?;
+    resolve_agent_for_runtime_config(&mut config).await?;
+
+    let mut task_previews = Vec::new();
+    for spec in &parsed.tasks {
+        let mut task_config = config.clone();
+        task_config.backend = spec.backend.clone().or_else(|| config.backend.clone());
+        task_config.agent = spec.agent.clone().or_else(|| config.agent.clone());
+        task_config.model = spec.model.clone().or_else(|| config.model.clone());
+        task_config.transport_mode = spec.transport_mode.unwrap_or(config.transport_mode);
+        task_config.permission_policy = spec.permission_policy.unwrap_or(config.permission_policy);
+
+        let request = spec.to_request(&task_config)?;
+        let backend = select_cli_backend(task_config.backend.as_deref())?;
+        ensure_request_supported(&backend, &task_config, &request)?;
+
+        task_previews.push(ParallelTaskPreview {
+            id: spec.id.clone(),
+            backend: backend.descriptor().name.to_string(),
+            transport: task_config.transport_mode,
+            permission_policy: task_config.permission_policy,
+            dependencies: spec.dependencies.clone(),
+        });
+    }
+
+    let max_workers = config
+        .max_parallel_workers
+        .unwrap_or_else(get_default_max_parallel_workers);
+
+    let graph: Vec<(String, Vec<String>)> = tasks
+        .iter()
+        .map(|t| (t.id.clone(), t.dependencies.clone()))
+        .collect();
+    let phases = task_graph::topological_phases(&graph);
+
+    Ok(ParallelPlan {
+        task_count: tasks.len(),
+        max_workers,
+        phases,
+        tasks: task_previews,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,5 +1102,168 @@ mod tests {
             tasks: vec![minimal_task_spec("a", "task 1"), spec_b],
         };
         assert!(ensure_parallel_tasks(&config).is_ok());
+    }
+
+    #[test]
+    fn parallel_config_rejects_circular_dependency() {
+        let mut spec_a = minimal_task_spec("a", "task a");
+        spec_a.dependencies = vec!["b".to_string()];
+        let mut spec_b = minimal_task_spec("b", "task b");
+        spec_b.dependencies = vec!["a".to_string()];
+        let config = wrangle_core::ParallelConfig {
+            tasks: vec![spec_a, spec_b],
+        };
+        let err = ensure_parallel_tasks(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("circular dependency"), "msg: {msg}");
+        assert!(msg.contains("a") && msg.contains("b"), "msg: {msg}");
+    }
+
+    #[test]
+    fn parallel_config_rejects_self_dependency() {
+        let mut spec = minimal_task_spec("a", "task a");
+        spec.dependencies = vec!["a".to_string()];
+        let config = wrangle_core::ParallelConfig { tasks: vec![spec] };
+        let err = ensure_parallel_tasks(&config).unwrap_err();
+        assert!(err.to_string().contains("depend on itself"));
+    }
+
+    #[test]
+    fn parallel_config_rejects_empty_task_id() {
+        let spec = ParallelTaskSpec {
+            id: "".to_string(),
+            task: "do something".to_string(),
+            ..minimal_task_spec("", "do something")
+        };
+        let config = wrangle_core::ParallelConfig { tasks: vec![spec] };
+        let err = ensure_parallel_tasks(&config).unwrap_err();
+        assert!(err.to_string().contains("non-empty"));
+    }
+
+    #[test]
+    fn parallel_config_unknown_dep_includes_task_context() {
+        let mut spec = minimal_task_spec("my-task", "task 1");
+        spec.dependencies = vec!["ghost".to_string()];
+        let config = wrangle_core::ParallelConfig { tasks: vec![spec] };
+        let err = ensure_parallel_tasks(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("my-task"), "msg: {msg}");
+        assert!(msg.contains("ghost"), "msg: {msg}");
+    }
+
+    #[test]
+    fn parallel_config_three_node_cycle_diagnosed() {
+        let mut spec_a = minimal_task_spec("a", "task a");
+        spec_a.dependencies = vec!["c".to_string()];
+        let mut spec_b = minimal_task_spec("b", "task b");
+        spec_b.dependencies = vec!["a".to_string()];
+        let mut spec_c = minimal_task_spec("c", "task c");
+        spec_c.dependencies = vec!["b".to_string()];
+        let config = wrangle_core::ParallelConfig {
+            tasks: vec![spec_a, spec_b, spec_c],
+        };
+        let err = ensure_parallel_tasks(&config).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("circular dependency"), "msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn preview_parallel_builds_plan_for_valid_graph() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let mut spec_b = minimal_task_spec("b", "task b");
+        spec_b.dependencies = vec!["a".to_string()];
+        let tasks = vec![minimal_task_spec("a", "task a"), spec_b];
+        let plan = preview_parallel(config, tasks).await.unwrap();
+        assert_eq!(plan.task_count, 2);
+        assert_eq!(plan.phases.len(), 2);
+        assert_eq!(plan.phases[0], vec!["a"]);
+        assert_eq!(plan.phases[1], vec!["b"]);
+        assert_eq!(plan.tasks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn preview_parallel_rejects_cycle() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let mut spec_a = minimal_task_spec("a", "task a");
+        spec_a.dependencies = vec!["b".to_string()];
+        let mut spec_b = minimal_task_spec("b", "task b");
+        spec_b.dependencies = vec!["a".to_string()];
+        let err = preview_parallel(config, vec![spec_a, spec_b])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("circular dependency"));
+    }
+
+    #[tokio::test]
+    async fn preview_parallel_diamond_graph_has_three_phases() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let mut spec_left = minimal_task_spec("left", "task left");
+        spec_left.dependencies = vec!["root".to_string()];
+        let mut spec_right = minimal_task_spec("right", "task right");
+        spec_right.dependencies = vec!["root".to_string()];
+        let mut spec_merge = minimal_task_spec("merge", "task merge");
+        spec_merge.dependencies = vec!["left".to_string(), "right".to_string()];
+        let tasks = vec![
+            minimal_task_spec("root", "task root"),
+            spec_left,
+            spec_right,
+            spec_merge,
+        ];
+        let plan = preview_parallel(config, tasks).await.unwrap();
+        assert_eq!(plan.task_count, 4);
+        assert_eq!(plan.phases.len(), 3);
+        assert_eq!(plan.phases[0], vec!["root"]);
+        assert!(plan.phases[1].contains(&"left".to_string()));
+        assert!(plan.phases[1].contains(&"right".to_string()));
+        assert_eq!(plan.phases[2], vec!["merge"]);
+    }
+
+    #[tokio::test]
+    async fn preview_parallel_rejects_unsupported_permission() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let task = ParallelTaskSpec {
+            id: "a".to_string(),
+            task: "do work".to_string(),
+            permission_policy: Some(PermissionPolicy::Ask),
+            ..minimal_task_spec("a", "do work")
+        };
+        let err = preview_parallel(config, vec![task]).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not support permission policy 'ask'")
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_parallel_task_previews_have_resolved_backend() {
+        let config = RuntimeConfig {
+            backend: Some("qwen".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            ..RuntimeConfig::default()
+        };
+        let tasks = vec![
+            minimal_task_spec("a", "task a"),
+            minimal_task_spec("b", "task b"),
+        ];
+        let plan = preview_parallel(config, tasks).await.unwrap();
+        assert_eq!(plan.tasks[0].backend, "qwen");
+        assert_eq!(plan.tasks[1].backend, "qwen");
+        assert_eq!(plan.tasks[0].transport, TransportMode::OneShotProcess);
     }
 }

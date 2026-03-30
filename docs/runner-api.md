@@ -220,6 +220,86 @@ for result in &results {
 before it starts spawning work, so unsupported permission policies fail before
 partially executing any tasks.
 
+### Preview a parallel execution plan
+
+Use `preview_parallel` to inspect the execution plan before committing to it.
+This is the recommended first step for orchestration callers building task graphs
+programmatically:
+
+```rust
+use wrangle_runner::{Runner, RuntimeConfig, ParallelTaskSpec, PermissionPolicy};
+use std::path::PathBuf;
+
+let runner = Runner::new(RuntimeConfig {
+    backend: Some("qwen".to_string()),
+    ..RuntimeConfig::default()
+});
+
+let tasks = vec![
+    ParallelTaskSpec {
+        id: "a".to_string(),
+        task: "first task".to_string(),
+        dependencies: vec![],
+        ..Default::default()
+    },
+    ParallelTaskSpec {
+        id: "b".to_string(),
+        task: "second task".to_string(),
+        dependencies: vec!["a".to_string()],
+        ..Default::default()
+    },
+];
+
+let plan = runner.preview_parallel(tasks).await?;
+println!("task_count: {}", plan.task_count);
+println!("max_workers: {}", plan.max_workers);
+for (i, phase) in plan.phases.iter().enumerate() {
+    println!("phase {}: {:?}", i, phase);
+}
+for task in &plan.tasks {
+    println!("{}: backend={}, transport={}, deps={:?}",
+        task.id, task.backend, task.transport, task.dependencies);
+}
+```
+
+The plan includes:
+
+- **`task_count`**: total number of tasks
+- **`max_workers`**: resolved concurrency limit
+- **`phases`**: execution phases from topological sort — tasks in the same phase can run concurrently
+- **`tasks`**: resolved per-task configuration (backend, transport, permission policy, dependencies)
+
+The same validation that runs during execution runs during preview, so a
+successful preview guarantees that execution will not fail due to graph
+structure or capability mismatches.
+
+### Parallel execution from the CLI
+
+Use `--parallel --dry-run` to validate and inspect a parallel plan from the
+command line:
+
+```bash
+# Write task specs to stdin
+echo '{"id":"a","task":"first task","dependencies":[]}
+{"id":"b","task":"second task","dependencies":["a"]}' | \
+  wrangle --parallel --dry-run --backend qwen
+
+# Validate a graph without executing
+echo '{"id":"x","task":"task x","dependencies":["y"]}
+{"id":"y","task":"task y","dependencies":["x"]}' | \
+  wrangle --parallel --dry-run --backend qwen
+# => Error: circular dependency detected: x -> y -> x
+```
+
+### Recommended usage for orchestration callers
+
+1. **Always preview first**: call `preview_parallel` before `execute_parallel` to catch graph errors early.
+2. **Validate your graph**: `wrangle` detects cycles, unknown deps, self-deps, and capability mismatches before spawning work.
+3. **Respect `max_workers`**: the plan tells you the concurrency limit. Do not exceed it.
+4. **Handle errors from individual tasks**: `execute_parallel` returns results for each task. Check `result.success` for each.
+5. **Ordering guarantee**: results are returned in the same order as the input task specs, regardless of execution order.
+6. **Trust `promptFile` carefully**: prompt files in task specs are disabled by default. Enable them only when you control or trust the task spec source.
+
 ### Resume a session
 
 ```rust
@@ -292,6 +372,7 @@ The following are considered the stable, documented public API:
 | `Runner::execute(request)` | Execute a structured request |
 | `Runner::execute_task(task)` | Convenience execute for a task string |
 | `Runner::execute_parallel(tasks)` | Execute tasks in parallel with dependencies |
+| `Runner::preview_parallel(tasks)` | Preview parallel plan without executing |
 | `Runner::plan_playbook(invocation)` | Build a playbook plan for inspection |
 | `Runner::execute_playbook(invocation)` | Build and execute a playbook |
 | `available_backends()` | Standalone: list backends |
@@ -300,6 +381,7 @@ The following are considered the stable, documented public API:
 | `preview_request(config, request)` | Standalone: preview execution |
 | `execute_request(config, request)` | Standalone: execute request |
 | `execute_parallel(config, tasks)` | Standalone: parallel execution |
+| `preview_parallel(config, tasks)` | Standalone: preview parallel plan |
 | `build_playbook(base_config, invocation)` | Build config + request for a playbook |
 | `build_playbook_plan(base_config, invocation)` | Build a playbook plan for inspection |
 | `CommandPreview` | Command that would be executed |
@@ -309,6 +391,8 @@ The following are considered the stable, documented public API:
 | `PlaybookName` | Well-known playbook identifiers |
 | `RuntimeConfigSnapshot` | Serializable config snapshot |
 | `NamedExecutionResult` | Task result tagged with id |
+| `ParallelPlan` | Parallel execution plan from preview |
+| `ParallelTaskPreview` | Resolved task config within a parallel plan |
 
 All types re-exported from `wrangle-core` are also part of the stable surface:
 `RuntimeConfig`, `ExecutionRequest`, `ExecutionResult`, `BackendCapabilities`,
