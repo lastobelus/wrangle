@@ -1,5 +1,5 @@
 [package]
-name = "wrangle-runner"
+name = "wrangle-server"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,4 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-wrangle-backends-api = { path = "../wrangle-backends-api" }
-wrangle-backends-cli = { path = "../wrangle-backends-cli" }
 wrangle-core = { path = "../wrangle-core" }
-wrangle-transport = { path = "../wrangle-transport" }

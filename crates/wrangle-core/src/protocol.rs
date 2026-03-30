@@ -30,6 +30,13 @@ impl BackendKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum BackendImplementation {
+    Cli,
+    Api,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TransportMode {
     OneShotProcess,
     PersistentBackend,
@@ -63,6 +70,7 @@ pub enum SessionState {
     Ephemeral,
     Resumable,
     PersistentAttached,
+    ServerAttached,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +106,7 @@ pub struct ExecutionEvent {
 pub struct ExecutionResult {
     pub success: bool,
     pub exit_code: i32,
-    pub duration_ms: u128,
+    pub duration_ms: u64,
     pub backend: BackendKind,
     pub transport: TransportMode,
     pub session: Option<SessionHandle>,
@@ -111,6 +119,7 @@ pub struct ExecutionResult {
 pub struct BackendDescriptor {
     pub kind: BackendKind,
     pub name: &'static str,
+    pub implementation: BackendImplementation,
     pub transport_modes: &'static [TransportMode],
     pub supports_resume: bool,
     pub supports_persistent_backend: bool,
@@ -122,6 +131,7 @@ pub struct BackendDescriptor {
 pub struct BackendCapabilities {
     pub kind: BackendKind,
     pub name: String,
+    pub implementation: BackendImplementation,
     pub transport_modes: Vec<TransportMode>,
     pub supports_resume: bool,
     pub supports_persistent_backend: bool,
@@ -134,6 +144,7 @@ impl BackendCapabilities {
         Self {
             kind: descriptor.kind,
             name: descriptor.name.to_string(),
+            implementation: descriptor.implementation,
             transport_modes: descriptor.transport_modes.to_vec(),
             supports_resume: descriptor.supports_resume,
             supports_persistent_backend: descriptor.supports_persistent_backend,
@@ -145,7 +156,7 @@ impl BackendCapabilities {
 
 #[derive(Debug, Clone)]
 pub struct CommandSpec {
-    pub program: &'static str,
+    pub program: String,
     pub args: Vec<String>,
     pub current_dir: PathBuf,
     pub env: HashMap<String, String>,
@@ -162,6 +173,24 @@ pub trait AgentBackend: Send + Sync {
         request: &ExecutionRequest,
         transport: TransportMode,
     ) -> Result<CommandSpec>;
+}
+
+#[async_trait]
+pub trait ApiBackend: Send + Sync {
+    fn descriptor(&self) -> BackendDescriptor;
+    fn is_available(&self) -> bool;
+
+    fn preview_command(
+        &self,
+        config: &RuntimeConfig,
+        request: &ExecutionRequest,
+    ) -> Result<CommandSpec>;
+
+    async fn execute_api(
+        &self,
+        config: &RuntimeConfig,
+        request: ExecutionRequest,
+    ) -> Result<ExecutionResult>;
 }
 
 #[async_trait]

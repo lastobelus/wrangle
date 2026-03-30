@@ -218,7 +218,7 @@ impl AgentBackend for OpencodePersistentClientBackend {
         args.push(target);
 
         Ok(CommandSpec {
-            program: "opencode",
+            program: "opencode".to_string(),
             args,
             current_dir: request.work_dir.clone(),
             env: request.extra_env.clone(),
@@ -364,9 +364,11 @@ mod tests {
             descriptor: BackendDescriptor {
                 kind: BackendKind::Opencode,
                 name: "opencode",
+                implementation: wrangle_core::BackendImplementation::Cli,
                 transport_modes: &[
                     TransportMode::OneShotProcess,
                     TransportMode::PersistentBackend,
+                    TransportMode::WrangleServer,
                 ],
                 supports_resume: true,
                 supports_persistent_backend: true,
@@ -405,7 +407,8 @@ mod tests {
                 BackendDescriptor {
                     kind: BackendKind::Qwen,
                     name: "qwen",
-                    transport_modes: &[TransportMode::OneShotProcess],
+                    implementation: wrangle_core::BackendImplementation::Cli,
+                    transport_modes: &[TransportMode::OneShotProcess, TransportMode::WrangleServer],
                     supports_resume: true,
                     supports_persistent_backend: false,
                     permission_policies: &[PermissionPolicy::Default],

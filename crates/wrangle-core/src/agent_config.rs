@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::RuntimeConfig;
+use crate::project_config::discover_config;
 use crate::protocol::PermissionPolicy;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -78,11 +79,6 @@ pub fn default_models_config() -> ModelsConfig {
     }
 }
 
-fn get_config_dir() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".wrangle")
-}
-
 fn normalize_optional(value: Option<String>) -> Option<String> {
     value.and_then(|v| {
         let trimmed = v.trim();
@@ -132,16 +128,27 @@ async fn load_models_config_from_file(models_file: &Path) -> Result<ModelsConfig
     Ok(config)
 }
 
-pub async fn load_models_config() -> Result<ModelsConfig> {
-    load_models_config_from_file(&get_config_dir().join("models.json")).await
+pub async fn load_models_config_for(start: &Path) -> Result<ModelsConfig> {
+    let discovery = discover_config(start).await?;
+    load_models_config_from_file(&discovery.active_models_file).await
 }
 
-pub async fn get_agent_config(name: &str) -> Result<AgentConfig> {
-    let models = load_models_config().await?;
+pub async fn load_models_config() -> Result<ModelsConfig> {
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    load_models_config_for(&start).await
+}
+
+pub async fn get_agent_config_for(name: &str, start: &Path) -> Result<AgentConfig> {
+    let models = load_models_config_for(start).await?;
     models.agents.get(name).cloned().map_or_else(
         || anyhow::bail!("agent not found: {}", name),
         |agent| Ok(normalize_agent(name, agent)),
     )
+}
+
+pub async fn get_agent_config(name: &str) -> Result<AgentConfig> {
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    get_agent_config_for(name, &start).await
 }
 
 pub fn apply_agent_to_runtime_config(config: &mut RuntimeConfig, agent: &AgentConfig) {
@@ -162,7 +169,7 @@ pub async fn resolve_agent_for_runtime_config(config: &mut RuntimeConfig) -> Res
     let Some(agent_name) = config.agent.clone() else {
         return Ok(());
     };
-    let agent = get_agent_config(&agent_name).await?;
+    let agent = get_agent_config_for(&agent_name, &config.work_dir).await?;
     apply_agent_to_runtime_config(config, &agent);
     Ok(())
 }

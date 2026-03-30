@@ -180,7 +180,8 @@ pub(crate) async fn run_subprocess(
         }))
         .await?;
 
-    let mut child = Command::new(command.program)
+    let program = command.program.clone();
+    let mut child = Command::new(&program)
         .args(&command.args)
         .current_dir(&command.current_dir)
         .env_clear()
@@ -189,7 +190,7 @@ pub(crate) async fn run_subprocess(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("failed to spawn {}", command.program))?;
+        .with_context(|| format!("failed to spawn {program}"))?;
 
     let child_id = child.id().unwrap_or(0);
     let _signal_guard = setup_signal_handler(child_id);
@@ -318,14 +319,14 @@ pub(crate) async fn run_subprocess(
             "transport": transport_label,
             "success": status.success(),
             "exitCode": exit_code,
-            "durationMs": started.elapsed().as_millis(),
+            "durationMs": started.elapsed().as_millis() as u64,
         }))
         .await?;
 
     Ok(ExecutionResult {
         success: status.success(),
         exit_code,
-        duration_ms: started.elapsed().as_millis(),
+        duration_ms: started.elapsed().as_millis() as u64,
         backend: backend_kind,
         transport: transport_mode,
         session,

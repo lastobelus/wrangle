@@ -2,17 +2,20 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use wrangle_core::{
     ExecutionRequest, PermissionPolicy, RuntimeConfig, RuntimeMode, SessionHandle, SessionState,
-    TransportMode, parse_parallel_config, read_stdin_task,
+    TransportMode, discover_config, parse_parallel_config, read_stdin_task,
 };
 use wrangle_runner::{
     PlaybookInvocation, PlaybookName, available_backends, build_playbook_plan, execute_parallel,
-    execute_request, preview_parallel, preview_request,
+    execute_request, find_backend, preview_parallel, preview_request,
 };
+use wrangle_server::{ServerRequest, ServerResponse};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -165,6 +168,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    ConfigPaths {
+        #[arg(long)]
+        json: bool,
+    },
+    Server {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        workdir: String,
+    },
     Playbook {
         #[arg(value_enum)]
         name: PlaybookArg,
@@ -173,11 +188,10 @@ enum Command {
     },
 }
 
-fn setup_logging(cli: &Cli) -> Result<Option<WorkerGuard>> {
-    let log_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".wrangle")
-        .join("logs");
+async fn setup_logging(cli: &Cli) -> Result<Option<WorkerGuard>> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let discovery = discover_config(&cwd).await?;
+    let log_dir = discovery.log_dir;
     std::fs::create_dir_all(&log_dir)?;
 
     let level = if cli.debug {
@@ -272,14 +286,152 @@ async fn print_or_run(cli: &Cli, config: RuntimeConfig, request: ExecutionReques
     Ok(())
 }
 
+#[derive(Default)]
+struct ServerState {
+    sessions: tokio::sync::Mutex<HashMap<String, SessionHandle>>,
+    next_session: std::sync::atomic::AtomicU64,
+}
+
+fn next_server_session_id(state: &ServerState) -> String {
+    let counter = state
+        .next_session
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("srv-{millis}-{counter}")
+}
+
+fn inner_transport_for(backend_name: &str) -> TransportMode {
+    let _ = find_backend(backend_name);
+    TransportMode::OneShotProcess
+}
+
+async fn handle_server_request(state: &ServerState, message: ServerRequest) -> ServerResponse {
+    match message {
+        ServerRequest::Health => ServerResponse::Pong,
+        ServerRequest::Execute {
+            backend_name,
+            mut config,
+            mut request,
+        } => {
+            config.backend = Some(backend_name.clone());
+            config.transport_mode = inner_transport_for(&backend_name);
+
+            let outer_session_id = request.session.as_ref().map(|session| session.id.clone());
+            if let Some(session) = request.session.as_ref()
+                && session.transport == TransportMode::WrangleServer
+            {
+                let sessions = state.sessions.lock().await;
+                request.session = sessions.get(&session.id).cloned();
+            }
+
+            match execute_request(config, request).await {
+                Ok(mut result) => {
+                    result.transport = TransportMode::WrangleServer;
+                    if let Some(inner) = result.session.clone() {
+                        let outer =
+                            outer_session_id.unwrap_or_else(|| next_server_session_id(state));
+                        let outer_handle = SessionHandle {
+                            id: outer.clone(),
+                            state: SessionState::ServerAttached,
+                            transport: TransportMode::WrangleServer,
+                        };
+                        state.sessions.lock().await.insert(outer, inner);
+                        result.session = Some(outer_handle);
+                    }
+                    ServerResponse::ExecuteResult { result }
+                }
+                Err(err) => ServerResponse::Error {
+                    message: err.to_string(),
+                },
+            }
+        }
+    }
+}
+
+async fn run_server(host: &str, port: u16, workdir: &str) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind((host, port)).await?;
+    std::env::set_current_dir(workdir)?;
+    let state = Arc::new(ServerState::default());
+
+    loop {
+        let (socket, _) = listener.accept().await?;
+        let state = state.clone();
+        tokio::spawn(async move {
+            let (reader, mut writer) = socket.into_split();
+            let mut reader = tokio::io::BufReader::new(reader);
+            let mut line = String::new();
+            if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                return;
+            }
+
+            let response = match serde_json::from_str::<ServerRequest>(line.trim_end()) {
+                Ok(message) => handle_server_request(&state, message).await,
+                Err(err) => ServerResponse::Error {
+                    message: format!("failed to parse wrangle server request: {err}"),
+                },
+            };
+
+            if let Ok(json) = serde_json::to_vec(&response) {
+                let _ = writer.write_all(&json).await;
+                let _ = writer.write_all(b"\n").await;
+                let _ = writer.flush().await;
+            }
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let _guard = setup_logging(&cli)?;
+    let _guard = setup_logging(&cli).await?;
 
     match &cli.command {
         Some(Command::Backends { json: _ }) => {
             println!("{}", serde_json::to_string_pretty(&available_backends())?);
+            return Ok(());
+        }
+        Some(Command::ConfigPaths { json }) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let discovery = discover_config(&cwd).await?;
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "projectDir": discovery.project_dir,
+                        "homeDir": discovery.home_dir,
+                        "activeModelsFile": discovery.active_models_file,
+                        "activeSettingsFile": discovery.active_settings_file,
+                        "logDir": discovery.log_dir,
+                    }))?
+                );
+            } else {
+                println!("projectDir: {:?}", discovery.project_dir);
+                println!("homeDir: {}", discovery.home_dir.display());
+                println!(
+                    "activeModelsFile: {}",
+                    discovery.active_models_file.display()
+                );
+                println!(
+                    "activeSettingsFile: {}",
+                    discovery
+                        .active_settings_file
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<none>".to_string())
+                );
+                println!("logDir: {}", discovery.log_dir.display());
+            }
+            return Ok(());
+        }
+        Some(Command::Server {
+            host,
+            port,
+            workdir,
+        }) => {
+            run_server(host, *port, workdir).await?;
             return Ok(());
         }
         Some(Command::Playbook {

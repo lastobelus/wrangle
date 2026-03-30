@@ -62,23 +62,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::task::JoinSet;
-use wrangle_backends_cli::{
-    backend_capabilities, ensure_permission_supported, ensure_transport_supported,
-    select_cli_backend,
-};
+use wrangle_backends_api::{api_backend_capabilities, select_api_backend};
+use wrangle_backends_cli::{backend_capabilities, select_cli_backend};
 use wrangle_core::{
-    AgentBackend, BackendTransport, ExecutionError, ensure_parallel_tasks,
-    get_default_max_parallel_workers, resolve_agent_for_runtime_config, task_graph,
+    AgentBackend, ApiBackend, BackendDescriptor, BackendTransport, ExecutionError,
+    ensure_parallel_tasks, get_default_max_parallel_workers, resolve_agent_for_runtime_config,
+    task_graph,
 };
 use wrangle_transport::{
-    PersistentBackendTransport, SubprocessTransport, preview_persistent_command,
+    PersistentBackendTransport, SubprocessTransport, WrangleServerTransport,
+    preview_persistent_command, preview_wrangle_server_command,
 };
 
 // Re-export core types so downstream callers only need wrangle-runner.
 pub use wrangle_core::{
-    BackendCapabilities, BackendDescriptor, BackendKind, CommandSpec, ExecutionEvent,
-    ExecutionRequest, ExecutionResult, ParallelConfig, ParallelTaskSpec, PermissionPolicy,
-    RuntimeConfig, RuntimeMode, SessionHandle, SessionState, TransportMode,
+    BackendCapabilities, BackendKind, CommandSpec, ExecutionEvent, ExecutionRequest,
+    ExecutionResult, ParallelConfig, ParallelTaskSpec, PermissionPolicy, RuntimeConfig,
+    RuntimeMode, SessionHandle, SessionState, TransportMode,
 };
 
 // ---------------------------------------------------------------------------
@@ -374,6 +374,27 @@ fn snapshot_config(config: &RuntimeConfig) -> RuntimeConfigSnapshot {
     }
 }
 
+enum ResolvedBackend {
+    Cli(wrangle_backends_cli::CliBackend),
+    Api(Box<dyn ApiBackend>),
+}
+
+impl ResolvedBackend {
+    fn descriptor(&self) -> BackendDescriptor {
+        match self {
+            Self::Cli(backend) => backend.descriptor(),
+            Self::Api(backend) => backend.descriptor(),
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        match self {
+            Self::Cli(backend) => backend.is_available(),
+            Self::Api(backend) => backend.is_available(),
+        }
+    }
+}
+
 fn build_playbook_task(name: PlaybookName, task: &str) -> String {
     match name {
         PlaybookName::LandWork => format!(
@@ -384,13 +405,61 @@ fn build_playbook_task(name: PlaybookName, task: &str) -> String {
 }
 
 fn ensure_request_supported(
-    backend: &wrangle_backends_cli::CliBackend,
+    descriptor: &BackendDescriptor,
     config: &RuntimeConfig,
     request: &ExecutionRequest,
 ) -> Result<()> {
-    ensure_transport_supported(backend, config.transport_mode)?;
-    ensure_permission_supported(backend, request.permission_policy)?;
+    if config.transport_mode == TransportMode::WrangleServer
+        && !WrangleServerTransport::launcher_available()
+    {
+        return Err(ExecutionError::UnsupportedTransport {
+            backend: descriptor.name.to_string(),
+            transport: "wrangle-server".to_string(),
+        }
+        .into());
+    }
+
+    if !descriptor.transport_modes.contains(&config.transport_mode) {
+        return Err(ExecutionError::UnsupportedTransport {
+            backend: descriptor.name.to_string(),
+            transport: match config.transport_mode {
+                TransportMode::OneShotProcess => "one-shot-process",
+                TransportMode::PersistentBackend => "persistent-backend",
+                TransportMode::WrangleServer => "wrangle-server",
+            }
+            .to_string(),
+        }
+        .into());
+    }
+    if !descriptor
+        .permission_policies
+        .contains(&request.permission_policy)
+    {
+        return Err(ExecutionError::UnsupportedPermissionPolicy {
+            backend: descriptor.name.to_string(),
+            policy: request.permission_policy.as_str().to_string(),
+        }
+        .into());
+    }
     Ok(())
+}
+
+fn select_backend(name: Option<&str>) -> Result<ResolvedBackend> {
+    if let Some(name) = name {
+        if let Ok(backend) = select_cli_backend(Some(name)) {
+            return Ok(ResolvedBackend::Cli(backend));
+        }
+        if let Ok(backend) = select_api_backend(Some(name)) {
+            return Ok(ResolvedBackend::Api(backend));
+        }
+        return Err(wrangle_core::BackendError::NotFound(name.to_string()).into());
+    }
+
+    if let Ok(backend) = select_cli_backend(None) {
+        return Ok(ResolvedBackend::Cli(backend));
+    }
+
+    Ok(ResolvedBackend::Api(select_api_backend(None)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +472,9 @@ fn ensure_request_supported(
 /// supported permission policies, and whether the backend binary is
 /// available on the current system.
 pub fn available_backends() -> Vec<BackendCapabilities> {
-    backend_capabilities()
+    let mut backends = backend_capabilities();
+    backends.extend(api_backend_capabilities());
+    backends
 }
 
 /// Look up a specific backend by name.
@@ -468,15 +539,31 @@ async fn build_execution_plan(
     request: ExecutionRequest,
 ) -> Result<ExecutionPlan> {
     resolve_agent_for_runtime_config(&mut config).await?;
-    let backend = select_cli_backend(config.backend.as_deref())?;
-    ensure_request_supported(&backend, &config, &request)?;
+    let backend = select_backend(config.backend.as_deref())?;
     let descriptor = backend.descriptor();
-    let command = if config.transport_mode == TransportMode::PersistentBackend
-        && descriptor.kind == BackendKind::Opencode
-    {
-        preview_persistent_command(descriptor.clone(), &config, &request)?
-    } else {
-        backend.build_command(&config, &request, config.transport_mode)?
+    ensure_request_supported(&descriptor, &config, &request)?;
+    let command = match (&backend, config.transport_mode) {
+        (ResolvedBackend::Cli(cli_backend), TransportMode::PersistentBackend)
+            if descriptor.kind == BackendKind::Opencode =>
+        {
+            preview_persistent_command(descriptor.clone(), &config, &request)?
+        }
+        (_, TransportMode::WrangleServer) => {
+            preview_wrangle_server_command(descriptor.name, &request)?
+        }
+        (ResolvedBackend::Cli(cli_backend), _) => {
+            cli_backend.build_command(&config, &request, config.transport_mode)?
+        }
+        (ResolvedBackend::Api(api_backend), TransportMode::OneShotProcess) => {
+            api_backend.preview_command(&config, &request)?
+        }
+        (ResolvedBackend::Api(_), TransportMode::PersistentBackend) => {
+            return Err(ExecutionError::UnsupportedTransport {
+                backend: descriptor.name.to_string(),
+                transport: "persistent-backend".to_string(),
+            }
+            .into());
+        }
     };
 
     Ok(ExecutionPlan {
@@ -514,20 +601,34 @@ pub async fn execute_request(
     request: ExecutionRequest,
 ) -> Result<ExecutionResult> {
     resolve_agent_for_runtime_config(&mut config).await?;
-    let backend = select_cli_backend(config.backend.as_deref())?;
-    ensure_request_supported(&backend, &config, &request)?;
+    let backend = select_backend(config.backend.as_deref())?;
+    let descriptor = backend.descriptor();
+    ensure_request_supported(&descriptor, &config, &request)?;
 
-    match config.transport_mode {
-        TransportMode::OneShotProcess => {
+    match (backend, config.transport_mode) {
+        (ResolvedBackend::Cli(backend), TransportMode::OneShotProcess) => {
             let transport = SubprocessTransport;
             transport.execute(&backend, &config, request).await
         }
-        TransportMode::PersistentBackend => {
+        (ResolvedBackend::Cli(backend), TransportMode::PersistentBackend) => {
             let transport = PersistentBackendTransport::new();
             transport.execute(&backend, &config, request).await
         }
-        TransportMode::WrangleServer => {
-            Err(ExecutionError::UnimplementedTransport("wrangle-server".to_string()).into())
+        (ResolvedBackend::Cli(backend), TransportMode::WrangleServer) => {
+            WrangleServerTransport::execute(backend.descriptor().name, &config, request).await
+        }
+        (ResolvedBackend::Api(backend), TransportMode::OneShotProcess) => {
+            backend.execute_api(&config, request).await
+        }
+        (ResolvedBackend::Api(backend), TransportMode::WrangleServer) => {
+            WrangleServerTransport::execute(backend.descriptor().name, &config, request).await
+        }
+        (ResolvedBackend::Api(backend), TransportMode::PersistentBackend) => {
+            Err(ExecutionError::UnsupportedTransport {
+                backend: backend.descriptor().name.to_string(),
+                transport: "persistent-backend".to_string(),
+            }
+            .into())
         }
     }
 }
@@ -556,8 +657,8 @@ pub async fn execute_parallel(
         task_config.permission_policy = spec.permission_policy.unwrap_or(config.permission_policy);
 
         let request = spec.to_request(&task_config)?;
-        let backend = select_cli_backend(task_config.backend.as_deref())?;
-        ensure_request_supported(&backend, &task_config, &request)?;
+        let backend = select_backend(task_config.backend.as_deref())?;
+        ensure_request_supported(&backend.descriptor(), &task_config, &request)?;
     }
 
     let max_workers = config
@@ -659,12 +760,13 @@ pub async fn preview_parallel(
         task_config.permission_policy = spec.permission_policy.unwrap_or(config.permission_policy);
 
         let request = spec.to_request(&task_config)?;
-        let backend = select_cli_backend(task_config.backend.as_deref())?;
-        ensure_request_supported(&backend, &task_config, &request)?;
+        let backend = select_backend(task_config.backend.as_deref())?;
+        let descriptor = backend.descriptor();
+        ensure_request_supported(&descriptor, &task_config, &request)?;
 
         task_previews.push(ParallelTaskPreview {
             id: spec.id.clone(),
-            backend: backend.descriptor().name.to_string(),
+            backend: descriptor.name.to_string(),
             transport: task_config.transport_mode,
             permission_policy: task_config.permission_policy,
             dependencies: spec.dependencies.clone(),

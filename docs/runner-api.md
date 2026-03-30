@@ -356,6 +356,50 @@ For Opencode, wrangle manages the server lifecycle and attaches with
 to start, execution falls back to one-shot Opencode and the `transport` field
 in the result reflects what actually happened.
 
+### Use an API-backed backend
+
+`wrangle` also supports API-backed adapters through the same preview/execute
+surface:
+
+```rust
+use wrangle_runner::{BackendImplementation, Runner, RuntimeConfig};
+
+let runner = Runner::new(RuntimeConfig {
+    backend: Some("codex-api".to_string()),
+    model: Some("gpt-4o-mini".to_string()),
+    ..RuntimeConfig::default()
+});
+
+let plan = runner.preview_task("summarize the repository").await?;
+assert_eq!(plan.backend.name, "codex-api");
+assert_eq!(plan.backend.implementation, BackendImplementation::Api);
+```
+
+API-backed adapters keep the same top-level request/result types, but capability
+reporting makes the implementation difference explicit.
+
+### Use WrangleServer transport
+
+`WrangleServer` routes execution through a wrangle-owned long-lived local
+server:
+
+```rust
+use wrangle_runner::{Runner, RuntimeConfig, TransportMode};
+
+let runner = Runner::new(RuntimeConfig {
+    backend: Some("qwen".to_string()),
+    transport_mode: TransportMode::WrangleServer,
+    ..RuntimeConfig::default()
+});
+
+let plan = runner.preview_task("summarize the current branch").await?;
+assert_eq!(plan.transport, TransportMode::WrangleServer);
+```
+
+The outer session handle belongs to `wrangle`, not the backend directly. See
+[docs/wrangle-server.md](docs/wrangle-server.md) for the detailed lifecycle and
+trust model.
+
 ## Error handling
 
 All runner functions return `anyhow::Result`. Errors from backend resolution,
@@ -424,5 +468,5 @@ The following are considered the stable, documented public API:
 
 All types re-exported from `wrangle-core` are also part of the stable surface:
 `RuntimeConfig`, `ExecutionRequest`, `ExecutionResult`, `BackendCapabilities`,
-`TransportMode`, `PermissionPolicy`, `SessionHandle`, `SessionState`,
-`ParallelTaskSpec`, `BackendKind`, `CommandSpec`.
+`BackendImplementation`, `TransportMode`, `PermissionPolicy`, `SessionHandle`,
+`SessionState`, `ParallelTaskSpec`, `BackendKind`, `CommandSpec`.

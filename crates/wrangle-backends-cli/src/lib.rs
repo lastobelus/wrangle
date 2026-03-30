@@ -1,8 +1,8 @@
 use anyhow::Result;
 use which::which;
 use wrangle_core::{
-    AgentBackend, BackendCapabilities, BackendDescriptor, BackendKind, ExecutionError,
-    ExecutionRequest, PermissionPolicy, RuntimeConfig, TransportMode,
+    AgentBackend, BackendCapabilities, BackendDescriptor, BackendImplementation, BackendKind,
+    ExecutionError, ExecutionRequest, PermissionPolicy, RuntimeConfig, TransportMode,
 };
 use wrangle_transport::{PersistentBackendTransport, request_to_target};
 
@@ -10,10 +10,12 @@ pub struct CliBackend {
     descriptor: BackendDescriptor,
 }
 
-const ONE_SHOT_ONLY: &[TransportMode] = &[TransportMode::OneShotProcess];
+const ONE_SHOT_AND_SERVER: &[TransportMode] =
+    &[TransportMode::OneShotProcess, TransportMode::WrangleServer];
 const ONE_SHOT_AND_PERSISTENT: &[TransportMode] = &[
     TransportMode::OneShotProcess,
     TransportMode::PersistentBackend,
+    TransportMode::WrangleServer,
 ];
 const ALL_POLICIES: &[PermissionPolicy] = &[
     PermissionPolicy::Default,
@@ -35,10 +37,11 @@ impl CliBackend {
             descriptor: BackendDescriptor {
                 kind,
                 name: kind.as_str(),
+                implementation: BackendImplementation::Cli,
                 transport_modes: if supports_persistent_backend {
                     ONE_SHOT_AND_PERSISTENT
                 } else {
-                    ONE_SHOT_ONLY
+                    ONE_SHOT_AND_SERVER
                 },
                 supports_resume: true,
                 supports_persistent_backend,
@@ -154,7 +157,7 @@ impl AgentBackend for CliBackend {
         let env = request.extra_env.clone();
 
         Ok(wrangle_core::CommandSpec {
-            program: self.descriptor.name,
+            program: self.descriptor.name.to_string(),
             args,
             current_dir: request.work_dir.clone(),
             env,

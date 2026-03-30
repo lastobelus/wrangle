@@ -7,14 +7,16 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::errors::ConfigError;
 use crate::protocol::{PermissionPolicy, SessionHandle, SessionState, TransportMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RuntimeMode {
     #[default]
     New,
     Resume,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeConfig {
     pub mode: RuntimeMode,
     pub backend: Option<String>,
