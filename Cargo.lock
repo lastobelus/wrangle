@@ -1097,6 +1097,7 @@ dependencies = [
  "async-trait",
  "ctrlc",
  "libc",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

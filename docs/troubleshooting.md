@@ -153,10 +153,24 @@ Operational notes:
 - project config can live in `opencode.json` at the project root
 - Opencode searches upward to the nearest Git directory for project config
 - provider credentials are stored in `~/.local/share/opencode/auth.json`
+- persistent server/session state is stored under `~/.local/share/opencode/`
 - permissions are controlled through the `permission` config
 - access outside the working directory is controlled through `permission.external_directory`
 
 Because Opencode already supports project config, it is a useful reference point for the `wrangle` issues in [#8](https://github.com/lastobelus/wrangle/issues/8) and [#9](https://github.com/lastobelus/wrangle/issues/9).
+
+If you want to use `wrangle --transport persistent-backend` for Opencode inside Codex, there are two extra writable-root requirements:
+
+- `~/.local/share/opencode/` so Opencode can read/write its SQLite database, auth state, and persistent server metadata
+- the repo `.git/` directory if you expect the backend to create commits from inside the sandbox
+
+Without the Opencode data directory, you may see SQLite/WAL errors such as:
+
+```text
+Failed to run the query 'PRAGMA wal_checkpoint(PASSIVE)'
+```
+
+Without `.git/` write access, the backend may be able to edit files but still fail when it tries to create `.git/index.lock` or write commit objects.
 
 ### Qwen
 

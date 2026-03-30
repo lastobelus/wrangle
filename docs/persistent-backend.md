@@ -4,8 +4,8 @@
 
 The `PersistentBackend` transport mode enables wrangle to connect to a backend's
 long-lived server process instead of spawning a fresh one-shot process for each
-execution. For Opencode, this uses the `--server` flag to attach to or start a
-persistent server instance.
+execution. For Opencode, wrangle now starts or reuses a local `opencode serve`
+instance and then executes requests through `opencode run --attach <url>`.
 
 ## Transport identity
 
@@ -32,9 +32,9 @@ is stable across all three.
 
 ### Persistent backend
 
-1. wrangle invokes the backend with `--server` flag
-2. Backend starts or attaches to its persistent server
-3. Task runs through the persistent server
+1. wrangle looks for an existing local Opencode server registry entry for the working directory
+2. if none is healthy, wrangle starts `opencode serve` on a local port and records the attach URL
+3. wrangle executes requests through `opencode run --attach <url> --dir <workdir>`
 4. wrangle collects results the same way
 5. Session state is `PersistentAttached`
 6. If persistent execution fails, wrangle falls back to one-shot automatically
@@ -84,7 +84,7 @@ assert!(opencode.supports_persistent_backend);
 ### Trust implications
 
 1. A persistent server crash may lose in-flight work that was not persisted
-2. Session state from one caller may be visible to another caller using the same server
+2. Session state from one caller may be visible to another caller using the same per-project server
 3. Permission decisions made in one session may carry forward within the server's lifetime
 4. A misbehaving caller could leave the server in a bad state for subsequent callers
 
@@ -93,7 +93,7 @@ Downstream orchestration systems should:
 - Use separate sessions for unrelated work
 - Not assume the server process is always clean
 - Handle `PersistentBackend` fallback to `OneShotProcess` gracefully
-- Clean up sessions when done using the close/resume semantics
+- Treat stale server metadata as disposable; wrangle recreates the server when the recorded attach target is no longer reachable
 
 ## Fallback behavior
 
@@ -102,7 +102,7 @@ When `TransportMode::PersistentBackend` is requested:
 1. wrangle checks if the backend supports persistent mode
 2. If not supported, falls back to `OneShotProcess` immediately
 3. If supported, attempts persistent execution
-4. If persistent execution fails, falls back to `OneShotProcess` without the session
+4. If persistent execution fails, falls back to `OneShotProcess`
 
 Fallback is transparent to the caller — the `ExecutionResult` will report the
 actual transport mode used (`transport` field), so callers can detect when
@@ -114,6 +114,13 @@ fallback occurred.
 
 ```bash
 wrangle --transport persistent-backend "fix the bug"
+```
+
+Under the hood, Opencode persistent mode is equivalent to:
+
+```bash
+opencode serve --hostname 127.0.0.1 --port <managed-port>
+opencode run --format json --attach http://127.0.0.1:<managed-port> --dir <workdir> "fix the bug"
 ```
 
 ### Library
@@ -142,4 +149,4 @@ println!("success: {}", result.success);
 |---|---|---|
 | `Ephemeral` | any | No session tracking |
 | `Resumable` | `OneShotProcess` | Session can be resumed with `-r` |
-| `PersistentAttached` | `PersistentBackend` | Session is attached to persistent server |
+| `PersistentAttached` | `PersistentBackend` | Session is attached to a backend-owned persistent server |

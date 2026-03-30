@@ -70,7 +70,9 @@ use wrangle_core::{
     AgentBackend, BackendTransport, ExecutionError, ensure_parallel_tasks,
     get_default_max_parallel_workers, resolve_agent_for_runtime_config, task_graph,
 };
-use wrangle_transport::{PersistentBackendTransport, SubprocessTransport};
+use wrangle_transport::{
+    PersistentBackendTransport, SubprocessTransport, preview_persistent_command,
+};
 
 // Re-export core types so downstream callers only need wrangle-runner.
 pub use wrangle_core::{
@@ -469,7 +471,13 @@ async fn build_execution_plan(
     let backend = select_cli_backend(config.backend.as_deref())?;
     ensure_request_supported(&backend, &config, &request)?;
     let descriptor = backend.descriptor();
-    let command = backend.build_command(&config, &request, config.transport_mode)?;
+    let command = if config.transport_mode == TransportMode::PersistentBackend
+        && descriptor.kind == BackendKind::Opencode
+    {
+        preview_persistent_command(descriptor.clone(), &config, &request)?
+    } else {
+        backend.build_command(&config, &request, config.transport_mode)?
+    };
 
     Ok(ExecutionPlan {
         backend: BackendCapabilities::from_descriptor(&descriptor, backend.is_available()),
@@ -1287,6 +1295,9 @@ mod tests {
         };
         let plan = preview_request(config, request).await.unwrap();
         assert_eq!(plan.transport, TransportMode::PersistentBackend);
+        assert_eq!(plan.command.program, "opencode");
+        assert!(plan.command.args.contains(&"--attach".to_string()));
+        assert!(plan.command.args.contains(&"--dir".to_string()));
     }
 
     #[test]

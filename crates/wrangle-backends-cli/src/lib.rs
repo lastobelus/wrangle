@@ -70,7 +70,7 @@ fn build_args(
     config: &RuntimeConfig,
     request: &ExecutionRequest,
     target: &str,
-    transport: TransportMode,
+    _transport: TransportMode,
 ) -> Vec<String> {
     let mut args = match kind {
         BackendKind::Codex => vec![
@@ -128,14 +128,6 @@ fn build_args(
         if !args.iter().any(|arg| arg == flag) {
             args.push(flag.to_string());
         }
-    }
-
-    match (kind, transport) {
-        (BackendKind::Opencode, TransportMode::PersistentBackend) => {
-            args.push("--server".to_string());
-        }
-        (_, TransportMode::WrangleServer) => {}
-        _ => {}
     }
 
     args.push(target.to_string());
@@ -281,29 +273,23 @@ mod tests {
     }
 
     #[test]
-    fn opencode_adds_server_flag_for_persistent() {
+    fn opencode_persistent_build_args_match_one_shot_shape() {
         let backend = CliBackend::new(BackendKind::Opencode, true);
-        let args = build_args(
-            backend.descriptor.kind,
-            &RuntimeConfig::default(),
-            &sample_request(),
-            "target",
-            TransportMode::PersistentBackend,
-        );
-        assert!(args.contains(&"--server".to_string()));
-    }
-
-    #[test]
-    fn opencode_does_not_add_server_flag_for_one_shot() {
-        let backend = CliBackend::new(BackendKind::Opencode, true);
-        let args = build_args(
+        let one_shot = build_args(
             backend.descriptor.kind,
             &RuntimeConfig::default(),
             &sample_request(),
             "target",
             TransportMode::OneShotProcess,
         );
-        assert!(!args.contains(&"--server".to_string()));
+        let persistent = build_args(
+            backend.descriptor.kind,
+            &RuntimeConfig::default(),
+            &sample_request(),
+            "target",
+            TransportMode::PersistentBackend,
+        );
+        assert_eq!(one_shot, persistent);
     }
 
     #[test]

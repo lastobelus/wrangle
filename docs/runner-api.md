@@ -328,6 +328,34 @@ let result = runner.execute(request).await?;
 // result.session contains the (possibly updated) session handle
 ```
 
+### Use Opencode persistent transport
+
+`PersistentBackend` keeps the same request/result model while routing Opencode
+through a backend-owned server process.
+
+```rust
+use wrangle_runner::{Runner, RuntimeConfig, TransportMode};
+
+let runner = Runner::new(RuntimeConfig {
+    backend: Some("opencode".to_string()),
+    transport_mode: TransportMode::PersistentBackend,
+    ..RuntimeConfig::default()
+});
+
+let plan = runner.preview_task("summarize the current branch").await?;
+assert_eq!(plan.transport, TransportMode::PersistentBackend);
+assert!(plan.command.args.contains(&"--attach".to_string()));
+
+let result = runner.execute_task("summarize the current branch").await?;
+println!("transport: {:?}", result.transport);
+println!("session: {:?}", result.session);
+```
+
+For Opencode, wrangle manages the server lifecycle and attaches with
+`opencode run --attach ...`. If the persistent server is unavailable or fails
+to start, execution falls back to one-shot Opencode and the `transport` field
+in the result reflects what actually happened.
+
 ## Error handling
 
 All runner functions return `anyhow::Result`. Errors from backend resolution,
