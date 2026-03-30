@@ -70,7 +70,7 @@ use wrangle_core::{
     AgentBackend, BackendTransport, ExecutionError, ensure_parallel_tasks,
     get_default_max_parallel_workers, resolve_agent_for_runtime_config, task_graph,
 };
-use wrangle_transport::SubprocessTransport;
+use wrangle_transport::{PersistentBackendTransport, SubprocessTransport};
 
 // Re-export core types so downstream callers only need wrangle-runner.
 pub use wrangle_core::{
@@ -515,7 +515,8 @@ pub async fn execute_request(
             transport.execute(&backend, &config, request).await
         }
         TransportMode::PersistentBackend => {
-            Err(ExecutionError::UnimplementedTransport("persistent-backend".to_string()).into())
+            let transport = PersistentBackendTransport::new();
+            transport.execute(&backend, &config, request).await
         }
         TransportMode::WrangleServer => {
             Err(ExecutionError::UnimplementedTransport("wrangle-server".to_string()).into())
@@ -1265,5 +1266,109 @@ mod tests {
         assert_eq!(plan.tasks[0].backend, "qwen");
         assert_eq!(plan.tasks[1].backend, "qwen");
         assert_eq!(plan.tasks[0].transport, TransportMode::OneShotProcess);
+    }
+
+    #[tokio::test]
+    async fn preview_request_uses_persistent_transport_when_configured() {
+        let config = RuntimeConfig {
+            backend: Some("opencode".to_string()),
+            work_dir: PathBuf::from("/tmp"),
+            transport_mode: TransportMode::PersistentBackend,
+            ..RuntimeConfig::default()
+        };
+        let request = ExecutionRequest {
+            task: "test task".to_string(),
+            work_dir: PathBuf::from("/tmp"),
+            model: None,
+            session: None,
+            permission_policy: PermissionPolicy::Default,
+            prompt_file: None,
+            extra_env: HashMap::new(),
+        };
+        let plan = preview_request(config, request).await.unwrap();
+        assert_eq!(plan.transport, TransportMode::PersistentBackend);
+    }
+
+    #[test]
+    fn execution_result_stable_across_transport_modes() {
+        let one_shot_result = ExecutionResult {
+            success: true,
+            exit_code: 0,
+            duration_ms: 100,
+            backend: BackendKind::Opencode,
+            transport: TransportMode::OneShotProcess,
+            session: Some(SessionHandle {
+                id: "sess-1".to_string(),
+                state: SessionState::Resumable,
+                transport: TransportMode::OneShotProcess,
+            }),
+            events: vec![],
+            stderr_truncated: false,
+            stderr_excerpt: None,
+        };
+
+        let persistent_result = ExecutionResult {
+            success: true,
+            exit_code: 0,
+            duration_ms: 100,
+            backend: BackendKind::Opencode,
+            transport: TransportMode::PersistentBackend,
+            session: Some(SessionHandle {
+                id: "sess-2".to_string(),
+                state: SessionState::PersistentAttached,
+                transport: TransportMode::PersistentBackend,
+            }),
+            events: vec![],
+            stderr_truncated: false,
+            stderr_excerpt: None,
+        };
+
+        assert!(one_shot_result.success);
+        assert!(persistent_result.success);
+        assert_eq!(one_shot_result.exit_code, persistent_result.exit_code);
+
+        let one_shot_json = serde_json::to_string(&one_shot_result).unwrap();
+        let persistent_json = serde_json::to_string(&persistent_result).unwrap();
+        assert!(one_shot_json.contains("\"oneShotProcess\""));
+        assert!(persistent_json.contains("\"persistentBackend\""));
+        assert!(persistent_json.contains("\"persistentAttached\""));
+        assert!(one_shot_json.contains("\"resumable\""));
+    }
+
+    #[test]
+    fn execution_request_model_identical_across_transport_modes() {
+        let request = ExecutionRequest {
+            task: "fix the bug".to_string(),
+            work_dir: PathBuf::from("/tmp/project"),
+            model: Some("gpt-5".to_string()),
+            session: None,
+            permission_policy: PermissionPolicy::Default,
+            prompt_file: None,
+            extra_env: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"fix the bug\""));
+        assert!(json.contains("\"gpt-5\""));
+        assert!(json.contains("\"default\""));
+        assert!(!json.contains("transport"));
+        assert!(!json.contains("Transport"));
+    }
+
+    #[test]
+    fn session_handle_distinguishes_transport_modes() {
+        let one_shot = SessionHandle {
+            id: "sess-1".to_string(),
+            state: SessionState::Resumable,
+            transport: TransportMode::OneShotProcess,
+        };
+        let persistent = SessionHandle {
+            id: "sess-1".to_string(),
+            state: SessionState::PersistentAttached,
+            transport: TransportMode::PersistentBackend,
+        };
+        assert_ne!(one_shot.state, persistent.state);
+        assert_ne!(one_shot.transport, persistent.transport);
+        assert_eq!(one_shot.id, persistent.id);
     }
 }

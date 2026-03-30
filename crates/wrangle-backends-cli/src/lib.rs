@@ -4,7 +4,7 @@ use wrangle_core::{
     AgentBackend, BackendCapabilities, BackendDescriptor, BackendKind, ExecutionError,
     ExecutionRequest, PermissionPolicy, RuntimeConfig, TransportMode,
 };
-use wrangle_transport::request_to_target;
+use wrangle_transport::{PersistentBackendTransport, request_to_target};
 
 pub struct CliBackend {
     descriptor: BackendDescriptor,
@@ -186,7 +186,16 @@ pub fn backend_capabilities() -> Vec<BackendCapabilities> {
         .into_iter()
         .map(|backend| {
             let descriptor = backend.descriptor();
-            BackendCapabilities::from_descriptor(&descriptor, backend.is_available())
+            let mut caps =
+                BackendCapabilities::from_descriptor(&descriptor, backend.is_available());
+            if caps.supports_persistent_backend
+                && !PersistentBackendTransport::is_persistent_available(&backend)
+            {
+                caps.supports_persistent_backend = false;
+                caps.transport_modes
+                    .retain(|m| *m != TransportMode::PersistentBackend);
+            }
+            caps
         })
         .collect()
 }
@@ -269,5 +278,79 @@ mod tests {
         );
         assert!(args.contains(&"stream-json".to_string()));
         assert!(args.contains(&"-r".to_string()));
+    }
+
+    #[test]
+    fn opencode_adds_server_flag_for_persistent() {
+        let backend = CliBackend::new(BackendKind::Opencode, true);
+        let args = build_args(
+            backend.descriptor.kind,
+            &RuntimeConfig::default(),
+            &sample_request(),
+            "target",
+            TransportMode::PersistentBackend,
+        );
+        assert!(args.contains(&"--server".to_string()));
+    }
+
+    #[test]
+    fn opencode_does_not_add_server_flag_for_one_shot() {
+        let backend = CliBackend::new(BackendKind::Opencode, true);
+        let args = build_args(
+            backend.descriptor.kind,
+            &RuntimeConfig::default(),
+            &sample_request(),
+            "target",
+            TransportMode::OneShotProcess,
+        );
+        assert!(!args.contains(&"--server".to_string()));
+    }
+
+    #[test]
+    fn opencode_descriptor_supports_persistent() {
+        let backend = CliBackend::new(BackendKind::Opencode, true);
+        assert!(backend.descriptor.supports_persistent_backend);
+        assert!(
+            backend
+                .descriptor
+                .transport_modes
+                .contains(&TransportMode::PersistentBackend)
+        );
+    }
+
+    #[test]
+    fn codex_descriptor_does_not_support_persistent() {
+        let backend = CliBackend::new(BackendKind::Codex, false);
+        assert!(!backend.descriptor.supports_persistent_backend);
+    }
+
+    #[test]
+    fn backend_capabilities_reflects_actual_persistent_availability() {
+        let caps = backend_capabilities();
+        let opencode = caps.iter().find(|c| c.name == "opencode").unwrap();
+        if which("opencode").is_ok() {
+            assert!(opencode.supports_persistent_backend);
+            assert!(
+                opencode
+                    .transport_modes
+                    .contains(&TransportMode::PersistentBackend)
+            );
+        } else {
+            assert!(!opencode.available);
+        }
+    }
+
+    #[test]
+    fn non_opencode_backends_do_not_advertise_persistent() {
+        let caps = backend_capabilities();
+        for cap in &caps {
+            if cap.name != "opencode" {
+                assert!(!cap.supports_persistent_backend);
+                assert!(
+                    !cap.transport_modes
+                        .contains(&TransportMode::PersistentBackend)
+                );
+            }
+        }
     }
 }
