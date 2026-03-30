@@ -20,9 +20,12 @@ Supported trigger shapes include:
 ## Rules
 
 - Prefer one blocking wrapper invocation with a long timeout.
+- If the host supports a command wait window such as `yield_time_ms`, set it to the full wrangle timeout window instead of polling.
 - Do not open an interactive subprocess session.
 - Do not poll just to narrate progress.
+- Do not call `write_stdin` or an equivalent session-polling primitive unless the command unexpectedly returns control before the timeout window.
 - Do not spend turns reporting streaming output from `wrangle`.
+- After launch, send no additional commentary until the wrapper exits or the host forcibly returns control.
 - Wait for completion, then summarize only the final result.
 - If backend is omitted, infer it from recent conversation context only when that is reliable.
 - If backend cannot be inferred safely, ask one short follow-up question.
@@ -58,6 +61,7 @@ python3 plugins/wrangle-codex/scripts/run_wrangle.py \
 ## Result Handling
 
 - The wrapper launches `wrangle` with `--progress-file` and `--quiet-until-complete`.
+- The wrapper also reports `recommendedYieldTimeMs`; when available, use that full wait window for the single blocking command.
 - Intermediate backend events go to the progress file, not the user-facing response path.
 - Normal success/failure handling should come from the wrapper's final JSON summary.
 - Only inspect the progress file if the run fails or if you need extra debugging context.

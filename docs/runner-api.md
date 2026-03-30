@@ -110,6 +110,28 @@ if !result.success {
 }
 ```
 
+### Quiet mode and progress file
+
+When running inside an automation host that should avoid intermediate stderr
+noise, set `quiet_until_complete` and provide a `progress_file` path:
+
+```rust
+use std::path::PathBuf;
+use wrangle_runner::RuntimeConfig;
+
+let config = RuntimeConfig {
+    backend: Some("qwen".to_string()),
+    quiet_until_complete: true,
+    progress_file: Some(PathBuf::from("/tmp/wrangle-progress.jsonl")),
+    ..RuntimeConfig::default()
+};
+```
+
+With this config, `wrangle` keeps its own stderr logging suppressed until the
+final result is ready, writes intermediate backend events as JSON Lines to the
+progress file, and still emits the final JSON result on stdout once execution
+completes.
+
 ### Build and run a playbook
 
 Playbooks are named workflows with opinionated prompts and agent defaults:

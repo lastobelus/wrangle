@@ -2,6 +2,21 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 #[test]
+fn quiet_until_complete_suppresses_stderr_in_dry_run() {
+    let mut cmd = Command::cargo_bin("wrangle").unwrap();
+    cmd.args([
+        "--dry-run",
+        "--backend",
+        "qwen",
+        "--quiet-until-complete",
+        "inspect this crate",
+    ])
+    .assert()
+    .success()
+    .stderr("");
+}
+
+#[test]
 fn help_includes_quiet_and_progress_flags() {
     let mut cmd = Command::cargo_bin("wrangle").unwrap();
     cmd.arg("--help")

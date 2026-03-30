@@ -76,6 +76,7 @@ impl ProgressWriter {
         let line = serde_json::to_vec(value)?;
         file.write_all(&line).await?;
         file.write_all(b"\n").await?;
+        file.flush().await?;
         Ok(())
     }
 }

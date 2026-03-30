@@ -209,6 +209,10 @@ def build_wrangle_argv(
     return argv
 
 
+def recommended_yield_time_ms(timeout_secs: int) -> int:
+    return (timeout_secs + 30) * 1000
+
+
 def run_wrangle(
     argv: list[str], cwd: Path, env: dict[str, str], progress_file: Path, timeout_secs: int
 ) -> tuple[int, dict[str, Any]]:
@@ -261,6 +265,7 @@ def main() -> int:
                     "model": request.model,
                     "cwd": str(request.cwd),
                     "timeoutSecs": timeout_secs,
+                    "recommendedYieldTimeMs": recommended_yield_time_ms(timeout_secs),
                     "progressFile": str(progress_file),
                     "wrangleCommand": argv,
                     "envKeys": sorted(env.keys()),
@@ -278,6 +283,7 @@ def main() -> int:
                 "model": request.model,
                 "cwd": str(request.cwd),
                 "timeoutSecs": timeout_secs,
+                "recommendedYieldTimeMs": recommended_yield_time_ms(timeout_secs),
                 "wrangleCommand": argv,
                 **result,
             },

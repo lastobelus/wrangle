@@ -66,6 +66,7 @@ The wrapper returns a normalized JSON summary with:
 
 - resolved backend and model
 - cwd and timeout
+- `recommendedYieldTimeMs` for hosts that can block on one long-running command
 - the exact `wrangle` argv
 - success/failure
 - final stdout result
@@ -77,6 +78,27 @@ The wrapper returns a normalized JSON summary with:
 The skill should:
 
 - run one blocking wrapper command with a long timeout
+- set the host command wait window to `recommendedYieldTimeMs` when possible
 - avoid interactive polling
+- avoid `write_stdin` or equivalent session polling unless the host unexpectedly returns control early
+- emit no additional commentary after launch until completion or forced return
 - avoid reporting streaming subprocess output
 - only inspect the progress file for debugging or failure analysis
+
+## Progress file event schema
+
+Progress events are written as JSON Lines. Each line is a single JSON object.
+All current events include a `type` field, and backend-emitted records also
+include the resolved backend name.
+
+Known event types today are:
+
+| `type` | When written | Key fields |
+|---|---|---|
+| `lifecycle` | start, completion, or timeout | `state`, `backend`, `transport`, `workDir`, `hasSession`, `timeoutSecs`, `exitCode`, `durationMs` |
+| `backendEvent` | each parsed stdout event from the backend | `backend`, `transport`, `payload` |
+| `parseError` | when a backend stdout line cannot be parsed as JSON | `backend`, `message` |
+| `stderrSummary` | after exit if the backend wrote to stderr | `backend`, `excerpt`, `truncated` |
+
+Consumers should treat unknown event types as forward-compatible extensions
+rather than errors.
